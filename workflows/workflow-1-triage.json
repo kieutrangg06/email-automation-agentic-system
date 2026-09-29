@@ -23,7 +23,7 @@
         "conditions": {
           "string": [
             {
-              "value1": "={{ ($json.body && ($json.body.from \u000bert{}\u000bert{}$json.body.sender)) || $json.from \u000bert{}\u000bert{}$json.sender || \"\" }}",
+              "value1": "={{ $json.body.from || $json.from || \"\" }}",
               "operation": "notContains",
               "value2": "no-reply"
             }
@@ -41,7 +41,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first().json;\nconst payload = item.body ? item.body : item;\nconst rawSender = payload.from || payload.sender || \"khachhang@congty.com\";\nconst cleanSender = rawSender.match(/<([^>]+)>/) ? rawSender.match(/<([^>]+)>/)[1] : rawSender;\nconst rawBody = payload.text || payload.body || \"\";\nconst cleanBody = rawBody.replace(/<[^>]*>?/gm, \"\").replace(/\\r?\\n|\\r/g, \" \").trim();\nconst cleanSubject = (payload.subject || \"Yêu cầu từ khách hàng\").replace(/\\r?\\n|\\r/g, \" \").trim();\n\nreturn [{\n  json: {\n    sender_email: cleanSender.trim(),\n    subject: cleanSubject,\n    clean_body: cleanBody,\n    received_at: new Date().toISOString()\n  }\n}];"
+        "jsCode": "const item = $input.first().json;\nconst payload = item.body ? item.body : item;\nconst rawSender = payload.from || payload.sender || \"khachhang@congty.com\";\nconst cleanSender = rawSender.match(/<([^>]+)>/) ? rawSender.match(/<([^>]+)>/)[1] : rawSender;\nconst rawBody = payload.text || payload.body || \"\";\nconst cleanBody = String(rawBody).replace(/<[^>]*>?/gm, \"\").replace(/\\r?\\n|\\r/g, \" \").trim();\nconst cleanSubject = String(payload.subject || \"Yeu cau\").replace(/\\r?\\n|\\r/g, \" \").trim();\n\nreturn [{\n  json: {\n    sender_email: cleanSender.trim(),\n    subject: cleanSubject,\n    clean_body: cleanBody,\n    received_at: new Date().toISOString()\n  }\n}];"
       },
       "id": "node-3",
       "name": "3. Cleanse & Normalize Email",
