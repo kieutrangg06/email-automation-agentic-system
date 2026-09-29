@@ -1,0 +1,627 @@
+{
+  "name": "Luồng 1 - AI Email Triage & Multi-Department Routing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "real-incoming-email",
+        "responseMode": "onReceived",
+        "responseData": "OK",
+        "options": {}
+      },
+      "id": "node-1",
+      "name": "1. Email Ingest Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ ($json.body && ($json.body.from \u000bert{}\u000bert{}$json.body.sender)) || $json.from \u000bert{}\u000bert{}$json.sender || \"\" }}",
+              "operation": "notContains",
+              "value2": "no-reply"
+            }
+          ]
+        }
+      },
+      "id": "node-2",
+      "name": "2. Filter Spam & Bounces",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst payload = item.body ? item.body : item;\nconst rawSender = payload.from || payload.sender || \"khachhang@congty.com\";\nconst cleanSender = rawSender.match(/<([^>]+)>/) ? rawSender.match(/<([^>]+)>/)[1] : rawSender;\nconst rawBody = payload.text || payload.body || \"\";\nconst cleanBody = rawBody.replace(/<[^>]*>?/gm, \"\").replace(/\\r?\\n|\\r/g, \" \").trim();\nconst cleanSubject = (payload.subject || \"Yêu cầu từ khách hàng\").replace(/\\r?\\n|\\r/g, \" \").trim();\n\nreturn [{\n  json: {\n    sender_email: cleanSender.trim(),\n    subject: cleanSubject,\n    clean_body: cleanBody,\n    received_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "node-3",
+      "name": "3. Cleanse & Normalize Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT status, notes FROM email_senders_reputation WHERE email = $1 LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.sender_email] }}"
+        }
+      },
+      "id": "node-4",
+      "name": "4. Check Sender Reputation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        860,
+        300
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.status || \"\" }}",
+              "operation": "equal",
+              "value2": "blacklist"
+            }
+          ]
+        }
+      },
+      "id": "node-5",
+      "name": "5. IF Sender Blacklisted",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://127.0.0.1:4000/api/v1/triage/departments",
+        "options": {}
+      },
+      "id": "node-6",
+      "name": "6. Fetch Depts from NestJS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1300,
+        340
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const emailItem = $(\"3. Cleanse & Normalize Email\").first().json;\n\nfunction removeVietnameseTones(str) {\n  return str.normalize(\"NFD\")\n    .replace(/[\\u0300-\\u036f]/g, \"\")\n    .replace(/đ/g, \"d\").replace(/Đ/g, \"D\")\n    .toLowerCase();\n}\n\nconst textSearch = removeVietnameseTones((emailItem.subject || \"\") + \" \" + (emailItem.clean_body || \"\"));\n\nlet category = \"General\";\nlet priority = \"P4 - Low\";\nlet sentiment = \"Tích cực\";\nlet reason = \"Yêu cầu thông tin thông thường\";\n\nif (textSearch.includes(\"khan cap\") || textSearch.includes(\"loi\") || textSearch.includes(\"sap\") || textSearch.includes(\"504\") || textSearch.includes(\"gateway\") || textSearch.includes(\"co so du lieu\")) {\n  category = \"Technical\";\n  priority = \"P1 - Critical\";\n  sentiment = \"Cần hỗ trợ gấp\";\n  reason = \"Sự cố hạ tầng hệ thống hoặc gián đoạn dịch vụ nghiêm trọng\";\n} else if (textSearch.includes(\"bao gia\") || textSearch.includes(\"mua\") || textSearch.includes(\"hop dong\") || textSearch.includes(\"demo\")) {\n  category = \"Sales\";\n  priority = \"P2 - High\";\n  sentiment = \"Hợp tác\";\n  reason = \"Yêu cầu tư vấn triển khai và báo giá hợp đồng thương mại\";\n} else if (textSearch.includes(\"hoa don\") || textSearch.includes(\"thanh toan\") || textSearch.includes(\"doi soat\") || textSearch.includes(\"vat\")) {\n  category = \"Finance\";\n  priority = \"P3 - Medium\";\n  sentiment = \"Hành chính\";\n  reason = \"Nghiệp vụ đối soát chứng từ và phát hành hóa đơn VAT\";\n}\n\nreturn [{\n  json: {\n    ...emailItem,\n    category,\n    priority,\n    sentiment,\n    urgency_reason: reason\n  }\n}];"
+      },
+      "id": "node-7",
+      "name": "7. AI Real Classifier Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nreturn [{ json: item }];"
+      },
+      "id": "node-8",
+      "name": "8. Output Schema Validator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nreturn [{\n  json: {\n    ...item,\n    routed_timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "node-9",
+      "name": "9. Switch Department Route",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_audit_logs (event_type, payload) VALUES ($1, $2::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [ROUTED_TECHNICAL, JSON.stringify({ sender: $json.sender_email, subject:$json.subject })] }}"
+        }
+      },
+      "id": "node-10",
+      "name": "10. Audit Route Technical",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2180,
+        140
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_audit_logs (event_type, payload) VALUES ($1, $2::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [ROUTED_SALES, JSON.stringify({ sender: $json.sender_email })] }}"
+        }
+      },
+      "id": "node-11",
+      "name": "11. Audit Route Sales",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2380,
+        140
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_audit_logs (event_type, payload) VALUES ($1, $2::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [ROUTED_FINANCE, JSON.stringify({ sender: $json.sender_email })] }}"
+        }
+      },
+      "id": "node-12",
+      "name": "12. Audit Route Finance",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2580,
+        140
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_audit_logs (event_type, payload) VALUES ($1, $2::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [ROUTED_GENERAL, JSON.stringify({ sender: $json.sender_email })] }}"
+        }
+      },
+      "id": "node-13",
+      "name": "13. Audit Route General",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2780,
+        140
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const mainItem = $(\"8. Output Schema Validator\").first().json;\nreturn [{ json: mainItem }];"
+      },
+      "id": "node-14",
+      "name": "14. Merge Branch Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2980,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.priority }}",
+              "operation": "contains",
+              "value2": "P1"
+            }
+          ]
+        }
+      },
+      "id": "node-15",
+      "name": "15. IF Priority P1 Urgent",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        3200,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ `INSERT INTO system_audit_logs (event_type, payload) VALUES ('HIGH_SEVERITY_INCIDENT_FLAGGED', '` + JSON.stringify({ urgency: $json.priority, sender:$json.sender_email }).replace(/'/g, \"''\") + `'::jsonb);` }}",
+        "options": {}
+      },
+      "id": "node-16",
+      "name": "16. Urgent Incident Dispatcher",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        3420,
+        220
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ `INSERT INTO email_triage_logs (sender_email, subject, body_snippet, category, priority, sentiment, urgency_reason, sla_deadline, status) VALUES ('` + ($json.sender_email || \"\").replace(/'/g, \"''\") + `', '` + ($json.subject || \"\").replace(/'/g, \"''\") + `', '` + ($json.clean_body || \"\").substring(0, 250).replace(/'/g, \"''\") + `', '` + ($json.category || \"General\").replace(/'/g, \"''\") + `', '` + ($json.priority || \"P4 - Low\").replace(/'/g, \"''\") + `', '` + ($json.sentiment || \"Neutral\").replace(/'/g, \"''\") + `', '` + ($json.urgency_reason || \"\").replace(/'/g, \"''\") + `', NOW() + INTERVAL '4 hours', 'PENDING') RETURNING *;` }}",
+        "options": {}
+      },
+      "id": "node-17",
+      "name": "17. Store Email Triage Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        3680,
+        340
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "kieutrangg06123@gmail.com",
+        "toEmail": "={{ $json.sender_email }}",
+        "subject": "=🔔 [Xác Nhận Tiếp Nhận] {{ $json.subject }}",
+        "html": "=<div style=\"font-family: Arial, sans-serif; line-height: 1.6; color: #333;\"><h2 style=\"color: #e11d48;\">Hệ Thống Tiếp Nhận Email Tự Động</h2><p>Xin chào <strong>{{ $json.sender_email }}</strong>,</p><p>Yêu cầu của bạn đã được tiếp nhận và phân công xử lý:</p><table style=\"border-collapse: collapse; width: 100%; max-width: 520px;\"><tr><td style=\"padding: 8px; border: 1px solid #ffe4e6;\"><strong>Tiêu đề:</strong></td><td style=\"padding: 8px; border: 1px solid #ffe4e6;\">{{ $json.subject }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ffe4e6;\"><strong>Bộ phận phụ trách:</strong></td><td style=\"padding: 8px; border: 1px solid #ffe4e6; color: #e11d48; font-weight: bold;\">{{ $json.category }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ffe4e6;\"><strong>Độ ưu tiên:</strong></td><td style=\"padding: 8px; border: 1px solid #ffe4e6; color: #b91c1c; font-weight: bold;\">{{ $json.priority }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #ffe4e6;\"><strong>Thời hạn SLA cam kết:</strong></td><td style=\"padding: 8px; border: 1px solid #ffe4e6;\">Trong vòng 4 giờ làm việc</td></tr></table><p style=\"margin-top: 15px;\">Chuyên viên phụ trách sẽ liên hệ phản hồi trực tiếp.</p><hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\"/><p style=\"font-size: 12px; color: #888;\">Email tự động từ hệ thống điều phối thông tin.</p></div>",
+        "options": {}
+      },
+      "id": "node-18",
+      "name": "18. Send Real Confirmation Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        3880,
+        340
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nnow.setHours(now.getHours() + 4);\nreturn [{ json: { target_sla: now.toISOString(), status: \"SLA_LOCKED\" } }];"
+      },
+      "id": "node-19",
+      "name": "19. Compute SLA Target",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4080,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_audit_logs (event_type, payload) VALUES ($1, $2::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [\"SLA_TARGET_CONFIRMED\", JSON.stringify({ sla_window_hours: 4, status: \"ACTIVE\" })] }}"
+        }
+      },
+      "id": "node-20",
+      "name": "20. Commit SLA Target in DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        4300,
+        340
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_audit_logs (event_type, payload) VALUES ($1, $2::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [\"SPAM_BLACKLIST_DROPPED\", JSON.stringify({ sender: $(\"3. Cleanse & Normalize Email\").first().json.sender_email, action: \"DISCARD\" })] }}"
+        }
+      },
+      "id": "node-21",
+      "name": "21. Global Blacklist Quarantine",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1300,
+        160
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "1. Email Ingest Trigger": {
+      "main": [
+        [
+          {
+            "node": "2. Filter Spam & Bounces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Filter Spam & Bounces": {
+      "main": [
+        [
+          {
+            "node": "3. Cleanse & Normalize Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Cleanse & Normalize Email": {
+      "main": [
+        [
+          {
+            "node": "4. Check Sender Reputation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Check Sender Reputation": {
+      "main": [
+        [
+          {
+            "node": "5. IF Sender Blacklisted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. IF Sender Blacklisted": {
+      "main": [
+        [
+          {
+            "node": "21. Global Blacklist Quarantine",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "6. Fetch Depts from NestJS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6. Fetch Depts from NestJS": {
+      "main": [
+        [
+          {
+            "node": "7. AI Real Classifier Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7. AI Real Classifier Engine": {
+      "main": [
+        [
+          {
+            "node": "8. Output Schema Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8. Output Schema Validator": {
+      "main": [
+        [
+          {
+            "node": "9. Switch Department Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "9. Switch Department Route": {
+      "main": [
+        [
+          {
+            "node": "10. Audit Route Technical",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10. Audit Route Technical": {
+      "main": [
+        [
+          {
+            "node": "11. Audit Route Sales",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "11. Audit Route Sales": {
+      "main": [
+        [
+          {
+            "node": "12. Audit Route Finance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "12. Audit Route Finance": {
+      "main": [
+        [
+          {
+            "node": "13. Audit Route General",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "13. Audit Route General": {
+      "main": [
+        [
+          {
+            "node": "14. Merge Branch Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "14. Merge Branch Data": {
+      "main": [
+        [
+          {
+            "node": "15. IF Priority P1 Urgent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "15. IF Priority P1 Urgent": {
+      "main": [
+        [
+          {
+            "node": "16. Urgent Incident Dispatcher",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "17. Store Email Triage Log",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "17. Store Email Triage Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "17. Store Email Triage Log": {
+      "main": [
+        [
+          {
+            "node": "18. Send Real Confirmation Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "18. Send Real Confirmation Email": {
+      "main": [
+        [
+          {
+            "node": "19. Compute SLA Target",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "19. Compute SLA Target": {
+      "main": [
+        [
+          {
+            "node": "20. Commit SLA Target in DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
