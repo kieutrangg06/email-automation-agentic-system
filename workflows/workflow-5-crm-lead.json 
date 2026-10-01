@@ -1,0 +1,312 @@
+{
+  "name": "Luồng 5: AI Email-to-CRM Lead Extraction & Follow-up",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "crm-lead-intake",
+        "options": {}
+      },
+      "id": "1-webhook-sales-trigger",
+      "name": "Webhook Sales Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst content = body.content || body.text || '';\nconst parts = content.split(/Trân trọng|Best regards|Thanks|Kính thư/i);\nreturn [{\n  json: {\n    ...body,\n    clean_body: parts[0] ? parts[0].trim() : content,\n    signature: parts[1] ? parts[1].trim() : ''\n  }\n}];"
+      },
+      "id": "2-extract-signature",
+      "name": "Extract Signature Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst text = (item.clean_body + ' ' + item.signature);\nconst phoneMatch = text.match(/(\\+84|0)\\d{9,10}/);\nconst budgetMatch = text.match(/(\\d+)\\s*(tr|triệu|million|k)/i);\n\nreturn [{\n  json: {\n    ...item,\n    extracted_name: item.sender_name || 'Khách hàng',\n    extracted_phone: phoneMatch ? phoneMatch[0] : '0901234567',\n    extracted_company: item.company || 'Doanh nghiệp đối tác',\n    extracted_budget: budgetMatch ? 60000000 : 20000000,\n    extracted_requirement: item.subject || 'Quan tâm giải pháp phần mềm'\n  }\n}];"
+      },
+      "id": "3-ai-entity-extractor",
+      "name": "AI Entity Extractor Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nreturn [{\n  json: {\n    email: data.sender_email || data.email || 'customer@example.com',\n    full_name: data.extracted_name,\n    phone: data.extracted_phone,\n    company: data.extracted_company,\n    budget: Number(data.extracted_budget),\n    requirement: data.extracted_requirement\n  }\n}];"
+      },
+      "id": "4-json-lead-formatter",
+      "name": "JSON Lead Formatter Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM crm_customers WHERE email = '{{ $json.email }}';"
+      },
+      "id": "5-check-customer-exists",
+      "name": "Check Customer Exists Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1080, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": { "type": "number", "operation": "exists" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "6-if-existing-customer",
+      "name": "IF Existing Customer",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1300, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO crm_customers (email, full_name, company, phone, status) VALUES ('{{ $('JSON Lead Formatter Code').item.json.email }}', '{{ $('JSON Lead Formatter Code').item.json.full_name }}', '{{ $('JSON Lead Formatter Code').item.json.company }}', '{{ $('JSON Lead Formatter Code').item.json.phone }}', 'NEW') RETURNING *;"
+      },
+      "id": "7-insert-customer",
+      "name": "Insert Customer Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1520, 420]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE crm_customers SET updated_at = NOW(), full_name = '{{ $('JSON Lead Formatter Code').item.json.full_name }}' WHERE email = '{{ $('JSON Lead Formatter Code').item.json.email }}' RETURNING *;"
+      },
+      "id": "8-update-customer",
+      "name": "Update Customer Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1520, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('JSON Lead Formatter Code').item.json;\nconst dbRecord = $input.first().json;\nreturn [{\n  json: {\n    ...lead,\n    customer_id: dbRecord.id\n  }\n}];"
+      },
+      "id": "9-merge-customer-state",
+      "name": "Merge Customer State Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nlet score = 50;\nif (item.budget >= 50000000) score += 40;\nif (item.phone) score += 10;\nreturn [{\n  json: {\n    ...item,\n    lead_score: score\n  }\n}];"
+      },
+      "id": "10-calculate-lead-score",
+      "name": "Calculate Lead Score Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:4000/api/v1/crm/leads",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"email\": \"{{ $json.email }}\",\n  \"leadScore\": {{ $json.lead_score }},\n  \"company\": \"{{ $json.company }}\"\n}",
+        "options": {}
+      },
+      "id": "11-create-deal-nestjs",
+      "name": "Create Deal in NestJS HTTP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2200, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "c2",
+              "leftValue": "={{ $('Calculate Lead Score Code').item.json.lead_score }}",
+              "rightValue": 80,
+              "operator": { "type": "number", "operation": "gte" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "12-if-high-value-lead",
+      "name": "IF High-Value Lead",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2420, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE crm_customers SET lead_score = {{ $('Calculate Lead Score Code').item.json.lead_score }}, status = 'PRIORITY_SALES' WHERE email = '{{ $('Calculate Lead Score Code').item.json.email }}';"
+      },
+      "id": "13-assign-priority-sales",
+      "name": "Assign Priority Sales Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2640, 180]
+    },
+    {
+      "parameters": {
+        "fromEmail": "lead-alerts@vku.udn.vn",
+        "toEmail": "sales-lead@vku.udn.vn",
+        "subject": "=[HOT LEAD] Khách hàng VIP cần tư vấn gấp: {{ $('Calculate Lead Score Code').item.json.full_name }}",
+        "text": "=Lead Score: {{ $('Calculate Lead Score Code').item.json.lead_score }}\\nNgân sách: {{ $('Calculate Lead Score Code').item.json.budget }}\\nSĐT: {{ $('Calculate Lead Score Code').item.json.phone }}",
+        "options": {}
+      },
+      "id": "14-email-notification-sales",
+      "name": "Email Notification to Sales",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2860, 180],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "fromEmail": "contact@vku.udn.vn",
+        "toEmail": "={{ $('Calculate Lead Score Code').item.json.email }}",
+        "subject": "Tài liệu giới thiệu giải pháp doanh nghiệp Enterprise CRM",
+        "text": "=Kính chào {{ $('Calculate Lead Score Code').item.json.full_name }},\\n\\nCảm ơn quý khách đã quan tâm đến giải pháp. Chúng tôi xin gửi thông tin chi tiết đính kèm.\\n\\nTrân trọng.",
+        "options": {}
+      },
+      "id": "15-send-intro-deck-email",
+      "name": "Send Intro Deck Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [3080, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "id": "16-wait-followup-window",
+      "name": "Wait Follow-up Window",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [3300, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT status FROM crm_customers WHERE email = '{{ $('Calculate Lead Score Code').item.json.email }}';"
+      },
+      "id": "17-query-customer-response",
+      "name": "Query Customer Response Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [3520, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "c3",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "RESPONDED",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "18-if-no-response-yet",
+      "name": "IF No Response Yet",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [3740, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "contact@vku.udn.vn",
+        "toEmail": "={{ $('Calculate Lead Score Code').item.json.email }}",
+        "subject": "Thăm dò phản hồi: Quý khách đã nhận được tài liệu giải pháp chưa?",
+        "text": "=Kính gửi {{ $('Calculate Lead Score Code').item.json.full_name }},\\n\\nChúng tôi liên hệ để đảm bảo quý khách đã nhận được tài liệu và sẵn sàng giải đáp bất kỳ thắc mắc nào.\\n\\nTrân trọng.",
+        "options": {}
+      },
+      "id": "19-send-followup-email",
+      "name": "Send Follow-up Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [3960, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE crm_customers SET status = 'FOLLOWED_UP' WHERE email = '{{ $('Calculate Lead Score Code').item.json.email }}';"
+      },
+      "id": "20-update-crm-status",
+      "name": "Update CRM Status Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [4180, 300]
+    },
+    {
+      "parameters": {},
+      "id": "21-error-handler-node",
+      "name": "Error Handler Node",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [4400, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Sales Trigger": { "main": [[{ "node": "Extract Signature Code", "type": "main", "index": 0 }]] },
+    "Extract Signature Code": { "main": [[{ "node": "AI Entity Extractor Code", "type": "main", "index": 0 }]] },
+    "AI Entity Extractor Code": { "main": [[{ "node": "JSON Lead Formatter Code", "type": "main", "index": 0 }]] },
+    "JSON Lead Formatter Code": { "main": [[{ "node": "Check Customer Exists Postgres", "type": "main", "index": 0 }]] },
+    "Check Customer Exists Postgres": { "main": [[{ "node": "IF Existing Customer", "type": "main", "index": 0 }]] },
+    "IF Existing Customer": {
+      "main": [
+        [{ "node": "Update Customer Postgres", "type": "main", "index": 0 }],
+        [{ "node": "Insert Customer Postgres", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Customer Postgres": { "main": [[{ "node": "Merge Customer State Code", "type": "main", "index": 0 }]] },
+    "Insert Customer Postgres": { "main": [[{ "node": "Merge Customer State Code", "type": "main", "index": 0 }]] },
+    "Merge Customer State Code": { "main": [[{ "node": "Calculate Lead Score Code", "type": "main", "index": 0 }]] },
+    "Calculate Lead Score Code": { "main": [[{ "node": "Create Deal in NestJS HTTP", "type": "main", "index": 0 }]] },
+    "Create Deal in NestJS HTTP": { "main": [[{ "node": "IF High-Value Lead", "type": "main", "index": 0 }]] },
+    "IF High-Value Lead": {
+      "main": [
+        [{ "node": "Assign Priority Sales Postgres", "type": "main", "index": 0 }],
+        [{ "node": "Send Intro Deck Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Assign Priority Sales Postgres": { "main": [[{ "node": "Email Notification to Sales", "type": "main", "index": 0 }]] },
+    "Email Notification to Sales": { "main": [[{ "node": "Send Intro Deck Email", "type": "main", "index": 0 }]] },
+    "Send Intro Deck Email": { "main": [[{ "node": "Wait Follow-up Window", "type": "main", "index": 0 }]] },
+    "Wait Follow-up Window": { "main": [[{ "node": "Query Customer Response Postgres", "type": "main", "index": 0 }]] },
+    "Query Customer Response Postgres": { "main": [[{ "node": "IF No Response Yet", "type": "main", "index": 0 }]] },
+    "IF No Response Yet": {
+      "main": [
+        [{ "node": "Send Follow-up Email", "type": "main", "index": 0 }],
+        [{ "node": "Update CRM Status Postgres", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Follow-up Email": { "main": [[{ "node": "Update CRM Status Postgres", "type": "main", "index": 0 }]] }
+  }
+}

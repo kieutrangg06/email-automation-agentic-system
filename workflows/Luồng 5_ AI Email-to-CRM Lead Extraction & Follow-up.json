@@ -1,0 +1,678 @@
+{
+  "name": "Luồng 5: AI Email-to-CRM Lead Extraction & Follow-up",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "crm-lead-intake",
+        "options": {}
+      },
+      "id": "c787e74a-2973-43a4-9dd3-0cb5cda8bb13",
+      "name": "Webhook Sales Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -1328,
+        128
+      ],
+      "webhookId": "d965ee77-fa7b-490b-92cf-0c5beee48c7f"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst content = body.content || body.text || '';\nconst parts = content.split(/Trân trọng|Best regards|Thanks|Kính thư/i);\nreturn [{\n  json: {\n    ...body,\n    clean_body: parts[0] ? parts[0].trim() : content,\n    signature: parts[1] ? parts[1].trim() : ''\n  }\n}];"
+      },
+      "id": "06192d62-133d-4f4e-a862-a44cdf769252",
+      "name": "Extract Signature Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1104,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst text = (item.clean_body + ' ' + item.signature);\nconst phoneMatch = text.match(/(\\+84|0)\\d{9,10}/);\nconst budgetMatch = text.match(/(\\d+)\\s*(tr|triệu|million|k)/i);\n\nreturn [{\n  json: {\n    ...item,\n    extracted_name: item.sender_name || 'Khách hàng',\n    extracted_phone: phoneMatch ? phoneMatch[0] : '0901234567',\n    extracted_company: item.company || 'Doanh nghiệp đối tác',\n    extracted_budget: budgetMatch ? 60000000 : 20000000,\n    extracted_requirement: item.subject || 'Quan tâm giải pháp phần mềm'\n  }\n}];"
+      },
+      "id": "1676e938-9880-4e93-9c77-d9ad14b1626f",
+      "name": "AI Entity Extractor Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nreturn [{\n  json: {\n    email: data.sender_email || data.email || 'customer@example.com',\n    full_name: data.extracted_name,\n    phone: data.extracted_phone,\n    company: data.extracted_company,\n    budget: Number(data.extracted_budget),\n    requirement: data.extracted_requirement\n  }\n}];"
+      },
+      "id": "3b712e36-eb87-4868-bdd2-7b84937d96bb",
+      "name": "JSON Lead Formatter Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -656,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM crm_customers WHERE email = '{{ $json.email }}';",
+        "options": {}
+      },
+      "id": "3ffc4661-ae87-4538-b51c-1a5757fd83b3",
+      "name": "Check Customer Exists Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -448,
+        128
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "dOIn9Rk5SNKWkQqD",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "0ffc65c8-210b-4e54-9813-dd8879323952",
+              "leftValue": "={{ $json.id ? 1 : 0 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "ignoreCase": true
+        }
+      },
+      "id": "1268caab-4230-416c-b18c-faaaad27f825",
+      "name": "IF Existing Customer",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO crm_customers (email, full_name, company, phone, lead_score, status)\nVALUES (\n  '{{ $json.email || $('Webhook Sales Trigger').first().json.body.sender_email }}',\n  '{{ $json.full_name || $('Webhook Sales Trigger').first().json.body.sender_name }}',\n  '{{ $json.company || $('Webhook Sales Trigger').first().json.body.company || 'Doanh nghiệp' }}',\n  '{{ $json.phone || '0905123987' }}',\n  85,\n  'PRIORITY_SALES'\n)\nON CONFLICT (email) DO UPDATE \nSET lead_score = 85, status = 'PRIORITY_SALES';",
+        "options": {}
+      },
+      "id": "164d5247-1456-475c-b0ca-57746efdc9cb",
+      "name": "Insert Customer Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        0,
+        240
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "dOIn9Rk5SNKWkQqD",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE crm_customers SET updated_at = NOW(), full_name = '{{ $('JSON Lead Formatter Code').item.json.full_name }}' WHERE email = '{{ $('JSON Lead Formatter Code').item.json.email }}' RETURNING *;",
+        "options": {}
+      },
+      "id": "77ed6a7e-4806-45a6-9993-86aa3931d507",
+      "name": "Update Customer Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "dOIn9Rk5SNKWkQqD",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('JSON Lead Formatter Code').item.json;\nconst dbRecord = $input.first().json;\nreturn [{\n  json: {\n    ...lead,\n    customer_id: dbRecord.id\n  }\n}];"
+      },
+      "id": "dd35993a-04fa-48b3-a205-85e2dfa3dc1d",
+      "name": "Merge Customer State Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nlet score = 50;\nif (item.budget >= 50000000) score += 40;\nif (item.phone) score += 10;\nreturn [{\n  json: {\n    ...item,\n    lead_score: score\n  }\n}];"
+      },
+      "id": "a61d6755-9be8-4e8a-b4eb-d1d73d979e39",
+      "name": "Calculate Lead Score Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://172.17.0.1:4000/api/v1/crm/leads",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fullName\": \"={{ $json.full_name || $('Webhook Sales Trigger').first().json.body.sender_name }}\",\n  \"email\": \"={{ $json.email || $('Webhook Sales Trigger').first().json.body.sender_email }}\",\n  \"company\": \"={{ $json.company || $('Webhook Sales Trigger').first().json.body.company }}\",\n  \"phone\": \"={{ $json.phone || '0905123987' }}\",\n  \"leadScore\": {{ $json.lead_score || 85 }}\n}",
+        "options": {}
+      },
+      "id": "a26f1735-85ec-42b8-99d0-780a776ff2c0",
+      "name": "Create Deal in NestJS HTTP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        688,
+        128
+      ],
+      "executeOnce": false,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c2",
+              "leftValue": "={{ $('Calculate Lead Score Code').item.json.lead_score }}",
+              "rightValue": 80,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7d0e3d1e-4ea0-4dea-abf5-e5fd4793781f",
+      "name": "IF High-Value Lead",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        912,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE crm_customers SET lead_score = {{ $('Calculate Lead Score Code').item.json.lead_score }}, status = 'PRIORITY_SALES' WHERE email = '{{ $('Calculate Lead Score Code').item.json.email }}';",
+        "options": {}
+      },
+      "id": "3469a8f2-893b-4a52-af19-d28c4064d008",
+      "name": "Assign Priority Sales Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1120,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "dOIn9Rk5SNKWkQqD",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "huonglan8926@gmail.com",
+        "toEmail": "mhuonglan89@gmail.com",
+        "subject": "=[HOT LEAD] Khách hàng VIP cần tư vấn gấp: {{ $('Calculate Lead Score Code').item.json.full_name }}",
+        "html": "=<!DOCTYPE html>\n<html lang=\"vi\">\n<head>\n  <meta charset=\"UTF-8\">\n  <style>\n    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f1f5f9; margin: 0; padding: 24px; color: #1e293b; }\n    .email-container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05); border: 1px solid #e2e8f0; }\n    .email-header { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 28px 32px; color: #ffffff; }\n    .brand-badge { display: inline-block; background: rgba(59, 130, 246, 0.2); border: 1px solid #3b82f6; color: #93c5fd; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; margin-bottom: 8px; }\n    .email-header h2 { margin: 0; font-size: 20px; font-weight: 700; color: #ffffff; }\n    .email-body { padding: 32px; }\n    .lead-badge { background-color: #fef2f2; border: 1px solid #fecaca; color: #dc2626; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; display: inline-block; margin-bottom: 20px; }\n    .info-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }\n    .info-table td { padding: 12px 14px; border-bottom: 1px solid #f1f5f9; font-size: 14px; }\n    .info-table td.label { width: 35%; color: #64748b; font-weight: 600; }\n    .info-table td.val { width: 65%; color: #0f172a; font-weight: 600; }\n    .content-box { background-color: #f8fafc; border-left: 4px solid #2563eb; padding: 14px 16px; border-radius: 4px; margin-bottom: 24px; font-size: 14px; color: #334155; line-height: 1.6; }\n    .cta-btn { display: inline-block; background-color: #2563eb; color: #ffffff !important; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: 700; font-size: 14px; text-align: center; }\n    .email-footer { background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 20px 32px; font-size: 12px; color: #94a3b8; text-align: center; }\n  </style>\n</head>\n<body>\n  <div class=\"email-container\">\n    <div class=\"email-header\">\n      <span class=\"brand-badge\">⚡ NovaCRM Lead Dispatch</span>\n      <h2>Phát hiện Cơ Hội Kinh Doanh Tiềm Năng (VIP)</h2>\n    </div>\n    <div class=\"email-body\">\n      <div class=\"lead-badge\">🔥 ĐIỂM TIỀM NĂNG: {{ $('Calculate Lead Score Code').first().json.lead_score || 90 }} / 100 PTS</div>\n      \n      <p style=\"margin: 0 0 16px 0; font-size: 14px; color: #475569; line-height: 1.5;\">\n        Hệ thống tự động tiếp nhận một yêu cầu tư vấn mới từ khách hàng doanh nghiệp:\n      </p>\n\n      <table class=\"info-table\">\n        <tr>\n          <td class=\"label\">Người liên hệ:</td>\n          <td class=\"val\">{{ $('Calculate Lead Score Code').first().json.full_name || $('Webhook Sales Trigger').first().json.body?.sender_name || $('Webhook Sales Trigger').first().json.sender_name || 'Khách hàng' }}</td>\n        </tr>\n        <tr>\n          <td class=\"label\">Địa chỉ Email:</td>\n          <td class=\"val\">{{ $('Calculate Lead Score Code').first().json.email || $('Webhook Sales Trigger').first().json.body?.sender_email || $('Webhook Sales Trigger').first().json.sender_email }}</td>\n        </tr>\n        <tr>\n          <td class=\"label\">Doanh nghiệp:</td>\n          <td class=\"val\">{{ $('Calculate Lead Score Code').first().json.company || $('Webhook Sales Trigger').first().json.body?.company || $('Webhook Sales Trigger').first().json.company || 'Đang cập nhật' }}</td>\n        </tr>\n        <tr>\n          <td class=\"label\">Số điện thoại:</td>\n          <td class=\"val\">{{ $('Calculate Lead Score Code').first().json.phone || $('AI Entity Extractor Code').first().json.phone || '0988776655' }}</td>\n        </tr>\n        <tr>\n          <td class=\"label\">Quy mô ngân sách:</td>\n          <td class=\"val\" style=\"color: #059669;\">\n            {{ $('Calculate Lead Score Code').first().json.estimated_budget ? Number($('Calculate Lead Score Code').first().json.estimated_budget).toLocaleString('vi-VN') + ' VNĐ' : '90.000.000 VNĐ' }}\n          </td>\n        </tr>\n      </table>\n\n      <div style=\"font-weight: 600; font-size: 13px; color: #475569; margin-bottom: 8px;\">NỘI DUNG YÊU CẦU BAN ĐẦU:</div>\n      <div class=\"content-box\">\n        \"{{ $('Webhook Sales Trigger').first().json.body?.content || $('Webhook Sales Trigger').first().json.content || 'Yêu cầu tư vấn triển khai phần mềm CRM tự động' }}\"\n      </div>\n\n      <div style=\"text-align: center; margin-top: 24px;\">\n        <a href=\"http://localhost:3000/crm\" class=\"cta-btn\" target=\"_blank\">Mở Dashboard Xem Chi Tiết</a>\n      </div>\n    </div>\n    <div class=\"email-footer\">\n      NovaCRM Lead Engine • Tự động hóa tiếp nhận khách hàng thời gian thực.\n    </div>\n  </div>\n</body>\n</html>\n",
+        "options": {}
+      },
+      "id": "92fd5ea2-03a9-4b76-b327-c580a22bc2bf",
+      "name": "Email Notification to Sales",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1344,
+        0
+      ],
+      "webhookId": "00855807-9e2b-4deb-9bfd-7313084b0f75",
+      "credentials": {
+        "smtp": {
+          "id": "ahqq2Ksc3TpsOb56",
+          "name": "SMTP account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "fromEmail": "huonglan8926@gmail.com",
+        "toEmail": "={{ $json.email || $('Webhook Sales Trigger').first().json.body?.sender_email || $('Webhook Sales Trigger').first().json.sender_email }}\n",
+        "subject": "=CHÀO MỪNG {{ $('Calculate Lead Score Code').first().json.full_name || $('Webhook Sales Trigger').first().json.body?.sender_name || 'Quý khách' }} - Giới thiệu giải pháp quản trị từ NovaCRM",
+        "html": "=<!DOCTYPE html>\n<html lang=\"vi\">\n<head>\n  <meta charset=\"UTF-8\">\n  <style>\n    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 28px; color: #334155; }\n    .email-card { max-width: 620px; margin: 0 auto; background: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04); }\n    .header { background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); padding: 36px 32px; color: #ffffff; }\n    .header h1 { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.5px; }\n    .body { padding: 32px; font-size: 15px; line-height: 1.7; color: #334155; }\n    .feature-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 18px 20px; margin: 20px 0; }\n    .feature-item { margin-bottom: 10px; font-size: 14px; }\n    .footer { background: #f1f5f9; padding: 24px 32px; text-align: center; font-size: 13px; color: #64748b; border-top: 1px solid #e2e8f0; }\n  </style>\n</head>\n<body>\n  <div class=\"email-card\">\n    <div class=\"header\">\n      <div style=\"font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #bfdbfe; margin-bottom: 6px;\">NovaCRM Solutions</div>\n      <h1>Xác Nhận Yêu Cầu Tư Vấn & Giải Pháp</h1>\n    </div>\n    <div class=\"body\">\n      <p>Kính gửi <strong>{{ $('Calculate Lead Score Code').first().json.full_name || $('Webhook Sales Trigger').first().json.body?.sender_name || 'Quý khách hàng' }}</strong>,</p>\n      <p>NovaCRM đã tiếp nhận thông tin yêu cầu của Quý đơn vị liên quan đến nhu cầu triển khai hệ thống quản trị khách hàng và tự động hóa quy trình nghiệp vụ.</p>\n      \n      <div class=\"feature-card\">\n        <div style=\"font-weight: 700; color: #0f172a; margin-bottom: 12px; font-size: 14px;\">BỘ HỒ SƠ GIẢI PHÁP ĐÍNH KÈM:</div>\n        <div class=\"feature-item\">✔ <strong>Company Profile 2026:</strong> Hồ sơ năng lực kỹ thuật và sản phẩm số.</div>\n        <div class=\"feature-item\">✔ <strong>Đặc Tả Nghiệp Vụ:</strong> Hệ thống tự động phân loại Lead và OCR đối soát hóa đơn thông minh.</div>\n        <div class=\"feature-item\">✔ <strong>Khung Ngân Sách Dự Kiến:</strong> Tối ưu theo quy mô vận hành của doanh nghiệp.</div>\n      </div>\n\n      <p>Chuyên viên tư vấn của chúng tôi sẽ liên hệ lại qua số điện thoại <strong>{{ $('Calculate Lead Score Code').first().json.phone || $('AI Entity Extractor Code').first().json.phone || '0988776655' }}</strong> trong thời gian sớm nhất để trao đổi chi tiết.</p>\n\n      <p style=\"margin-top: 24px;\">Trân trọng cảm ơn sự quan tâm của Quý doanh nghiệp,<br>\n      <strong>Đội Ngũ Dự Án NovaCRM</strong></p>\n    </div>\n    <div class=\"footer\">\n      NovaCRM Enterprise Platform • Tòa nhà Công nghệ VKU, Đà Nẵng<br>\n      Hotline: 1900 8888 • Email: support@novacrm.vn\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "acfad8d3-21bd-4096-82c1-f849c1d984f4",
+      "name": "Send Intro Deck Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1568,
+        128
+      ],
+      "webhookId": "591a61ea-f7c5-49b2-92b2-6d918e3eb5db",
+      "credentials": {
+        "smtp": {
+          "id": "ahqq2Ksc3TpsOb56",
+          "name": "SMTP account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {},
+      "id": "3b875c5e-f369-450d-9ba0-d907e3b1ecce",
+      "name": "Wait Follow-up Window",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1792,
+        128
+      ],
+      "webhookId": "62dde33c-d1bd-4fd8-904d-b8dc480df24d"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE crm_customers \nSET lead_score = {{ $('Calculate Lead Score Code').item.json.lead_score }}, \n    status = 'PRIORITY_SALES' \nWHERE email = '{{ $('Calculate Lead Score Code').item.json.email }}';",
+        "options": {}
+      },
+      "id": "84491aec-60f3-455e-9eb3-6ffbc03fd758",
+      "name": "Query Customer Response Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2000,
+        128
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "dOIn9Rk5SNKWkQqD",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c3",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "RESPONDED",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "bccbac50-c7fe-4029-baa2-70da4d8cc702",
+      "name": "IF No Response Yet",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2224,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "huonglan8926@gmail.coms",
+        "toEmail": "={{ $json.email || $('Webhook Sales Trigger').first().json.body?.sender_email || $('Webhook Sales Trigger').first().json.sender_email }}",
+        "subject": "=Thăm dò phản hồi: Quý khách đã nhận được tài liệu giải pháp chưa?",
+        "html": "==<!DOCTYPE html>\n<html lang=\"vi\">\n<head>\n  <meta charset=\"UTF-8\">\n  <style>\n    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #334155; }\n    .box { max-width: 600px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 32px; box-shadow: 0 2px 10px rgba(0,0,0,0.03); }\n    .header { font-size: 20px; font-weight: 700; color: #0f172a; margin-bottom: 20px; border-bottom: 2px solid #2563eb; padding-bottom: 12px; }\n    .content { font-size: 14px; line-height: 1.6; color: #334155; }\n    .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #f1f5f9; font-size: 12px; color: #94a3b8; }\n  </style>\n</head>\n<body>\n  <div class=\"box\">\n    <div class=\"header\">Thư Thăm Dò & Hỗ Trợ Kỹ Thuật NovaCRM</div>\n    <div class=\"content\">\n      <p>Kính gửi <strong>{{ $json.full_name || $('Webhook Sales Trigger').first().json.body?.sender_name || 'Quý khách' }}</strong>,</p>\n      <p>Bộ phận hỗ trợ kỹ thuật NovaCRM xin phép liên hệ lại để kiểm tra xem Quý khách đã nhận được bộ tài liệu giải pháp và hồ sơ năng lực mà chúng tôi gửi trước đó chưa ạ?</p>\n      <p>Nếu Quý khách cần đặt lịch hẹn demo trực tiếp hệ thống hoặc cần giải đáp bất kỳ thắc mắc nào về phương án triển khai phần mềm CRM, xin vui lòng phản hồi trực tiếp email này hoặc liên hệ hotline <strong>1900 8888</strong>.</p>\n      <p>Chúc Quý khách một ngày làm việc hiệu quả!</p>\n      <p style=\"margin-top: 20px;\">Trân trọng,<br><strong>Ban Chăm Sóc Khách Hàng NovaCRM</strong></p>\n    </div>\n    <div class=\"footer\">\n      NovaCRM Enterprise Platform • Tòa nhà Công nghệ VKU, Đà Nẵng\n    </div>\n  </div>\n</body>\n</html>\n",
+        "options": {}
+      },
+      "id": "ca92955b-85ab-40e7-9b88-89813fc5b9b5",
+      "name": "Send Follow-up Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2448,
+        32
+      ],
+      "webhookId": "37c84f02-e602-4430-b30c-b0a8312c5c98",
+      "credentials": {
+        "smtp": {
+          "id": "ahqq2Ksc3TpsOb56",
+          "name": "SMTP account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE crm_customers SET status = 'FOLLOWED_UP' WHERE email = '{{ $('Calculate Lead Score Code').item.json.email }}';",
+        "options": {}
+      },
+      "id": "4f0adc3e-21a0-4e4a-ac50-e2abfbddde7b",
+      "name": "Update CRM Status Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2672,
+        128
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "dOIn9Rk5SNKWkQqD",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "c0dd5352-d78b-4396-a0e5-d5c380dc94bf",
+      "name": "Error Handler Node",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        2880,
+        128
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook Sales Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Signature Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Signature Code": {
+      "main": [
+        [
+          {
+            "node": "AI Entity Extractor Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Entity Extractor Code": {
+      "main": [
+        [
+          {
+            "node": "JSON Lead Formatter Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JSON Lead Formatter Code": {
+      "main": [
+        [
+          {
+            "node": "Check Customer Exists Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Customer Exists Postgres": {
+      "main": [
+        [
+          {
+            "node": "IF Existing Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Existing Customer": {
+      "main": [
+        [
+          {
+            "node": "Update Customer Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insert Customer Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Customer Postgres": {
+      "main": [
+        [
+          {
+            "node": "Merge Customer State Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Customer Postgres": {
+      "main": [
+        [
+          {
+            "node": "Merge Customer State Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Customer State Code": {
+      "main": [
+        [
+          {
+            "node": "Calculate Lead Score Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Lead Score Code": {
+      "main": [
+        [
+          {
+            "node": "Create Deal in NestJS HTTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Deal in NestJS HTTP": {
+      "main": [
+        [
+          {
+            "node": "IF High-Value Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF High-Value Lead": {
+      "main": [
+        [
+          {
+            "node": "Assign Priority Sales Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Intro Deck Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign Priority Sales Postgres": {
+      "main": [
+        [
+          {
+            "node": "Email Notification to Sales",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Notification to Sales": {
+      "main": [
+        [
+          {
+            "node": "Send Intro Deck Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Intro Deck Email": {
+      "main": [
+        [
+          {
+            "node": "Wait Follow-up Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Follow-up Window": {
+      "main": [
+        [
+          {
+            "node": "Query Customer Response Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Customer Response Postgres": {
+      "main": [
+        [
+          {
+            "node": "IF No Response Yet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF No Response Yet": {
+      "main": [
+        [
+          {
+            "node": "Send Follow-up Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update CRM Status Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Follow-up Email": {
+      "main": [
+        [
+          {
+            "node": "Update CRM Status Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "f8fb4fb8-4944-4e12-8795-e4611351582e",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "bcdc4132d5eca99d09bd1b78d9cb808d5719984b465ac0c3605800def13cd04c"
+  },
+  "nodeGroups": [],
+  "id": "JmuBZNxuqJaOUbpK",
+  "tags": []
+}
