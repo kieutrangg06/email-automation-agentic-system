@@ -1,0 +1,647 @@
+{
+  "name": "Luồng 2 - AI Email-to-Ticket Generator with SLA Assignment",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "incoming-ticket-trigger",
+        "responseMode": "onReceived",
+        "responseData": "OK",
+        "options": {}
+      },
+      "id": "w2-node-1",
+      "name": "1. Webhook Ticket Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst payload = item.body ? item.body : item;\n\nconst sender = payload.sender_email || payload.from || \"guest@enterprise.com\";\nconst subject = payload.subject || \"Yêu cầu hỗ trợ kỹ thuật\";\nconst body = payload.clean_body || payload.text || payload.body || \"Không có nội dung chi tiết\";\nconst category = payload.category || \"Technical\";\nconst priority = payload.priority || \"P1 - Critical\";\n\nreturn [{\n  json: {\n    sender_email: sender,\n    title: subject,\n    raw_description: body,\n    category: category,\n    priority: priority\n  }\n}];"
+      },
+      "id": "w2-node-2",
+      "name": "2. Clean Payload Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const randomNum = Math.floor(1000 + Math.random() * 9000);\nconst ticketCode = `TICK-2026-${randomNum}`;\nconst current = $input.first().json;\n\nreturn [{\n  json: {\n    ...current,\n    ticket_code: ticketCode,\n    generated_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "w2-node-3",
+      "name": "3. Gen Ticket Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT name, email FROM support_agents WHERE category = $1 AND status = 'AVAILABLE' ORDER BY active_tickets_count ASC LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.category] }}"
+        }
+      },
+      "id": "w2-node-4",
+      "name": "4. Query Available Agents Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        860,
+        300
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={{ $env.GEMINI_API_KEY || "YOUR_GEMINI_API_KEY" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  contents: [{\n    parts: [{\n      text: `Tóm tắt sự cố này thành đúng 2 gạch đầu dòng ngắn gọn:\\nTiêu đề: ${$(\"3. Gen Ticket Code\").first().json.title}\\nNội dung: ${$(\"3. Gen Ticket Code\").first().json.raw_description}`\n    }]\n  }]\n}) }}",
+        "options": {}
+      },
+      "id": "w2-node-5",
+      "name": "5. AI Summarize Issue Code",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1080,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $(\"3. Gen Ticket Code\").first().json;\nconst agentData = $(\"4. Query Available Agents Postgres\").first().json;\nlet summary = \"\";\n\ntry {\n  summary = $input.first().json.candidates[0].content.parts[0].text.trim();\n} catch (e) {\n  summary = `- Tiếp nhận sự cố kỹ thuật: ${base.title}\\n- Đang xử lý tự động qua hệ thống`;\n}\n\nconst assignedName = (agentData && agentData.name) ? agentData.name : \"Nguyễn Văn An (Kỹ thuật)\";\nconst assignedEmail = (agentData && agentData.email) ? agentData.email : \"an.nguyen@enterprise.vn\";\n\nreturn [{\n  json: {\n    ticket_code: base.ticket_code,\n    sender_email: base.sender_email,\n    title: base.title,\n    description: base.raw_description,\n    summary: summary,\n    category: base.category,\n    priority: base.priority,\n    assigned_to: assignedName,\n    agent_email: assignedEmail\n  }\n}];"
+      },
+      "id": "w2-node-6",
+      "name": "6. Format Markdown Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:4000/api/v1/triage/tickets",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "w2-node-7",
+      "name": "7. Call NestJS POST /tickets HTTP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1520,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const res = $input.first().json;\n// Kiểm tra response từ NestJS: hoặc có ticket hoặc có status là created\nconst isSuccess = (res && (res.status === 'created' || res.ticket !== undefined || res.statusCode === undefined));\n\nreturn [{\n  json: {\n    success: isSuccess ? \"YES\" : \"NO\",\n    api_response: res\n  }\n}];"
+      },
+      "id": "w2-node-8",
+      "name": "8. Validate Ticket Creation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.success }}",
+              "operation": "equal",
+              "value2": "YES"
+            }
+          ]
+        }
+      },
+      "id": "w2-node-8-if",
+      "name": "8.1. IF API Created",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1940,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_audit_logs (event_type, payload) VALUES ($1, $2::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [\"TICKET_CREATED_SUCCESS\", JSON.stringify($(\"6. Format Markdown Code\").first().json)] }}"
+        }
+      },
+      "id": "w2-node-9",
+      "name": "9. Audit Ticket Created Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2180,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:4000/api/v1/triage/in-app-alert",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ event: \"NEW_TICKET_ALERT\", ticket_code: $(\"6. Format Markdown Code\").first().json.ticket_code, assigned_to: $(\"6. Format Markdown Code\").first().json.assigned_to }) }}",
+        "options": {}
+      },
+      "id": "w2-node-10",
+      "name": "10. Push In-App Alert HTTP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2400,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "fromEmail": "kieutrangg06123@gmail.com",
+        "toEmail": "={{ $('6. Format Markdown Code').first().json.sender_email }}",
+        "subject": "=🎫 [Mã Yêu Cầu Hỗ Trợ: {{ $('6. Format Markdown Code').first().json.ticket_code }}] {{$('6. Format Markdown Code').first().json.title }}",
+        "html": "=<div style=\"font-family: Arial, sans-serif; line-height: 1.6; color: #1e293b;\"><div style=\"background-color: #2563eb; color: #ffffff; padding: 16px; border-radius: 8px 8px 0 0;\"><h3 style=\"margin: 0;\">🎫 PHIẾU HỖ TRỢ ĐÃ ĐƯỢC TẠO THÀNH CÔNG</h3></div><div style=\"padding: 20px; border: 1px solid #cbd5e1; border-top: none;\"><p>Xin chào quý khách <strong>{{ $('6. Format Markdown Code').first().json.sender_email }}</strong>,</p><p>Hệ thống hỗ trợ kỹ thuật đã khởi tạo mã Ticket chính thức cho vấn đề của bạn:</p><table style=\"border-collapse: collapse; width: 100%; font-size: 13px; margin: 15px 0;\"><tr><td style=\"padding: 8px; border: 1px solid #e2e8f0; background: #f8fafc; width: 35%;\"><strong>Mã tra cứu Ticket:</strong></td><td style=\"padding: 8px; border: 1px solid #e2e8f0; font-weight: bold; color: #2563eb;\">{{ $('6. Format Markdown Code').first().json.ticket_code }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #e2e8f0; background: #f8fafc;\"><strong>Chuyên viên phụ trách:</strong></td><td style=\"padding: 8px; border: 1px solid #e2e8f0;\">{{ $('6. Format Markdown Code').first().json.assigned_to }}</td></tr><tr><td style=\"padding: 8px; border: 1px solid #e2e8f0; background: #f8fafc;\"><strong>Tóm tắt sự cố:</strong></td><td style=\"padding: 8px; border: 1px solid #e2e8f0; white-space: pre-line;\">{{ $('6. Format Markdown Code').first().json.summary }}</td></tr></table><p style=\"font-size: 12px; color: #64748b;\">Thời hạn phản hồi đầu tiên (First Response SLA): Trong vòng <strong>2 giờ</strong>.</p></div></div>",
+        "options": {}
+      },
+      "id": "w2-node-11",
+      "name": "11. Customer Ticket Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2620,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_audit_logs (event_type, payload) VALUES ($1, $2::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [\"AGENT_ASSIGNED\", JSON.stringify({ ticket: $(\"6. Format Markdown Code\").first().json.ticket_code, agent: $(\"6. Format Markdown Code\").first().json.assigned_to })] }}"
+        }
+      },
+      "id": "w2-node-12",
+      "name": "12. Log Assignment Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2840,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 1,
+        "unit": "seconds"
+      },
+      "id": "w2-node-13",
+      "name": "13. Wait Throttling",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        3060,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const deadline = new Date();\ndeadline.setHours(deadline.getHours() + 2);\n\nreturn [{\n  json: {\n    ticket_code: $(\"6. Format Markdown Code\").first().json.ticket_code,\n    first_response_sla: deadline.toISOString()\n  }\n}];"
+      },
+      "id": "w2-node-14",
+      "name": "14. Calc First-Response SLA Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3280,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE tickets SET first_response_sla = $1 WHERE ticket_code = $2 RETURNING *;",
+        "options": {
+          "queryReplacement": "={{ [$json.first_response_sla,$json.ticket_code] }}"
+        }
+      },
+      "id": "w2-node-15",
+      "name": "15. Update SLA Deadline Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        3500,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ticket_code, priority, assigned_to FROM tickets WHERE ticket_code = $1 LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$(\"6. Format Markdown Code\").first().json.ticket_code] }}"
+        }
+      },
+      "id": "w2-node-16",
+      "name": "16. Check Status Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        3720,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('6. Format Markdown Code').first().json;\nreturn [{\n  json: {\n    ticket_code: base.ticket_code,\n    sender_email: base.sender_email,\n    title: base.title,\n    summary: base.summary,\n    assigned_to: base.assigned_to,\n    priority: base.priority || 'P1 - Critical',\n    is_escalated: true\n  }\n}];"
+      },
+      "id": "w2-node-17",
+      "name": "17. Filter Escalation Priority",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3940,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "kieutrangg06123@gmail.com",
+        "toEmail": "tranglee12306@gmail.com",
+        "subject": "=⚡ [LEO THANG KHẨN CẤP / ESCALATION] Ticket P1: {{ $json.ticket_code }}",
+        "html": "=<div style=\"background: #fff1f2; border: 1px solid #fecdd3; padding: 18px; border-radius: 8px; font-family: Arial, sans-serif;\"><h3 style=\"color: #b91c1c; margin-top: 0;\">🚨 CẢNH BÁO LEO THANG SỰ CỐ KHẨN CẤP (P1)</h3><p>Kính gửi <strong>Trưởng Bộ Phận Kỹ Thuật</strong>,</p><p>Hệ thống tự động phát hiện Ticket mức độ nghiêm trọng cần giám sát can thiệp khẩn cấp:</p><ul><li><strong>Mã Ticket:</strong> {{ $json.ticket_code }}</li><li><strong>Tiêu đề:</strong> {{ $json.title }}</li><li><strong>Chuyên viên phụ trách:</strong> {{ $json.assigned_to }}</li><li><strong>Hạn First-Response SLA:</strong> Trong vòng 2 giờ tới</li></ul><p>Vui lòng đăng nhập hệ thống tại <a href=\"http://localhost:3000/helpdesk\">Dashboard Helpdesk</a> để kiểm tra.</p></div>",
+        "options": {}
+      },
+      "id": "w2-node-18",
+      "name": "18. Send Escalation Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        4180,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_audit_logs (event_type, payload) VALUES ($1, $2::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [\"CRITICAL_TICKET_ESCALATED\", JSON.stringify({ ticket_code: $json.ticket_code, triggered_reason: \"High severity P1 incident\" })] }}"
+        }
+      },
+      "id": "w2-node-19",
+      "name": "19. Audit Escalation Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        4400,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_audit_logs (event_type, payload) VALUES ($1, $2::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [\"WORKFLOW_ERROR_CAPTURED\", JSON.stringify({ status: \"FAILED_CREATION\", raw: $json })] }}"
+        }
+      },
+      "id": "w2-node-20",
+      "name": "20. Error Catch Handler",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2180,
+        420
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "1. Webhook Ticket Trigger": {
+      "main": [
+        [
+          {
+            "node": "2. Clean Payload Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Clean Payload Code": {
+      "main": [
+        [
+          {
+            "node": "3. Gen Ticket Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Gen Ticket Code": {
+      "main": [
+        [
+          {
+            "node": "4. Query Available Agents Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Query Available Agents Postgres": {
+      "main": [
+        [
+          {
+            "node": "5. AI Summarize Issue Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. AI Summarize Issue Code": {
+      "main": [
+        [
+          {
+            "node": "6. Format Markdown Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6. Format Markdown Code": {
+      "main": [
+        [
+          {
+            "node": "7. Call NestJS POST /tickets HTTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7. Call NestJS POST /tickets HTTP": {
+      "main": [
+        [
+          {
+            "node": "8. Validate Ticket Creation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8. Validate Ticket Creation": {
+      "main": [
+        [
+          {
+            "node": "8.1. IF API Created",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8.1. IF API Created": {
+      "main": [
+        [
+          {
+            "node": "9. Audit Ticket Created Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "20. Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "9. Audit Ticket Created Postgres": {
+      "main": [
+        [
+          {
+            "node": "10. Push In-App Alert HTTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10. Push In-App Alert HTTP": {
+      "main": [
+        [
+          {
+            "node": "11. Customer Ticket Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "11. Customer Ticket Email": {
+      "main": [
+        [
+          {
+            "node": "12. Log Assignment Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "12. Log Assignment Postgres": {
+      "main": [
+        [
+          {
+            "node": "13. Wait Throttling",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "13. Wait Throttling": {
+      "main": [
+        [
+          {
+            "node": "14. Calc First-Response SLA Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "14. Calc First-Response SLA Code": {
+      "main": [
+        [
+          {
+            "node": "15. Update SLA Deadline Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "15. Update SLA Deadline Postgres": {
+      "main": [
+        [
+          {
+            "node": "16. Check Status Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "16. Check Status Postgres": {
+      "main": [
+        [
+          {
+            "node": "17. Filter Escalation Priority",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "17. IF Unassigned or Critical": {
+      "main": [
+        [
+          {
+            "node": "18. Send Escalation Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "18. Send Escalation Email": {
+      "main": [
+        [
+          {
+            "node": "19. Audit Escalation Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "17. Filter Escalation Priority": {
+      "main": [
+        [
+          {
+            "node": "18. Send Escalation Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

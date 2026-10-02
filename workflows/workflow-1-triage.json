@@ -432,6 +432,34 @@
           "name": "Postgres account"
         }
       }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:5678/webhook/incoming-ticket-trigger",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  sender_email: $('14. Merge Branch Data').first().json.sender_email,\n  subject: $('14. Merge Branch Data').first().json.subject,\n  clean_body: $('14. Merge Branch Data').first().json.clean_body,\n  category: $('14. Merge Branch Data').first().json.category,\n  priority: $('14. Merge Branch Data').first().json.priority\n}) }}",
+        "options": {}
+      },
+      "id": "node-trigger-luong-2",
+      "name": "Trigger Luong 2 Workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        4120,
+        360
+      ],
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -666,6 +694,17 @@
         [
           {
             "node": "20. Commit SLA Target in DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "20. Commit SLA Target in DB": {
+      "main": [
+        [
+          {
+            "node": "Trigger Luong 2 Workflow",
             "type": "main",
             "index": 0
           }

@@ -1,37 +1,42 @@
-import { Controller, Post, Get, Patch, Body, Query, Param, HttpCode, HttpStatus } from '@nestjs/common';
-import { TicketsService } from './tickets.service';
-import { TriageWebhookDto } from './dto/triage-webhook.dto';
+import { Controller, Post, Get, Patch, Body, Query, Param } from "@nestjs/common";
+import { TicketsService } from "./tickets.service";
 
-@Controller('api/v1/triage')
+@Controller("api/v1/triage")
 export class TicketsController {
-  constructor(private readonly ticketsService: TicketsService) {}
+  constructor(private readonly service: TicketsService) {}
 
-  @Get('departments')
+  @Get("departments")
   async getDepartments() {
-    return this.ticketsService.getDepartments();
+    return this.service.getDepartments();
   }
 
-  @Post('webhook-callback')
-  @HttpCode(HttpStatus.OK)
-  async handleTriageCallback(@Body() dto: TriageWebhookDto) {
-    return this.ticketsService.recordTriageEvent(dto);
+  @Get("logs")
+  async getLogs() {
+    return this.service.getRecentLogs();
   }
 
-  @Get('logs')
-  async getTriageLogs(
-    @Query('category') category?: string,
-    @Query('priority') priority?: string,
-  ) {
-    return this.ticketsService.getRecentLogs(category, priority);
-  }
-
-  @Get('stats')
+  @Get("stats")
   async getStats() {
-    return this.ticketsService.getStats();
+    return this.service.getStats();
   }
 
-  @Patch('logs/:id/status')
-  async updateStatus(@Param('id') id: string, @Body('status') status: string) {
-    return this.ticketsService.updateStatus(Number(id), status);
+  @Post("tickets")
+  async createTicket(@Body() body: any) {
+    return this.service.createTicket(body);
+  }
+
+  @Get("tickets")
+  async getTickets(@Query("status") status?: string, @Query("priority") priority?: string) {
+    return this.service.getAllTickets(status, priority);
+  }
+
+  @Patch("tickets/:code/resolve")
+  async resolve(@Param("code") code: string) {
+    return this.service.resolveTicket(code);
+  }
+
+  @Post("in-app-alert")
+  async inAppAlert(@Body() body: any) {
+    return { status: "ok" };
   }
 }
