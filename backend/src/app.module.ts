@@ -4,13 +4,12 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TicketsModule } from './modules/tickets/tickets.module';
 import { CrmModule } from './modules/crm/crm.module';
+import { AccountingController } from './modules/accounting/accounting.controller';
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
 @Module({
   imports: [
-    // Distributed tracing, auto-correlated logs, request/job metrics, error
-    // telemetry, alarms, and more — out of the box. Sign up at https://observe.nestjs.com
     ObserveModule.forRoot({
       appKey: 'YOUR_APP_KEY',
       appSecret: 'YOUR_APP_SECRET',
@@ -19,7 +18,7 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     TicketsModule,
     CrmModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, AccountingController],
   providers: [AppService],
 })
 export class AppModule {}

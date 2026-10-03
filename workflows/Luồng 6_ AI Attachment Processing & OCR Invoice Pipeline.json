@@ -1,0 +1,672 @@
+{
+  "name": "Luồng 6: AI Attachment Processing & OCR Invoice Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "attachment-invoice-intake",
+        "options": {}
+      },
+      "id": "fae0a4cc-b0ff-4830-a3d1-0e31da28a452",
+      "name": "Attachment Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -2496,
+        208
+      ],
+      "webhookId": "attachment-invoice-intake-v6"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "3f5cfaa1-bf97-4231-ab73-f3175e3ea3e6",
+              "leftValue": "=={{ ['pdf', 'png', 'jpg', 'jpeg'].includes(String($json.body?.file_extension || $json.file_extension || '').toLowerCase().trim()) }}\n",
+              "rightValue": "pdf|png|jpg|jpeg",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "b53f75e8-f1ae-40dd-b2ce-30152e874f6a",
+      "name": "Filter Extensions IF",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -2288,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $input.first().json.body || $input.first().json;\nconst fileName = payload.filename || payload.file_name || 'hoadon_vat_2026.pdf';\nconst ext = (payload.file_extension || fileName.split('.').pop() || 'pdf').toLowerCase().replace('.', '');\nconst mimeType = payload.mime_type || (ext === 'pdf' ? 'application/pdf' : `image/${ext === 'jpg' ? 'jpeg' : ext}`);\nconst fileSize = payload.file_size || 245890;\nconst senderEmail = payload.sender_email || 'ketoan.doitac@gmail.com';\nconst senderName = payload.sender_name || 'Công ty TNHH Giải Pháp Đối Tác';\n\nreturn [{\n  json: {\n    file_name: fileName,\n    file_extension: ext,\n    mime_type: mimeType,\n    file_size_bytes: fileSize,\n    sender_email: senderEmail,\n    sender_name: senderName,\n    raw_binary_content: payload.binary_base64 || null,\n    received_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "a735b4be-2944-4e33-a398-f9c1610dbe7b",
+      "name": "Extract Metadata Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1840,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst timestamp = Date.now();\nconst cleanName = item.file_name.replace(/[^a-zA-Z0-9.-]/g, '_');\nconst storagePath = `/var/storage/invoices/${timestamp}_${cleanName}`;\n\nreturn [{\n  json: {\n    ...item,\n    storage_path: storagePath,\n    storage_status: 'SAVED_SECURELY',\n    checksum: 'sha256_' + Math.random().toString(36).substring(2, 15)\n  }\n}];"
+      },
+      "id": "1262cbe7-a9ff-44e0-bd51-14bf1f553ade",
+      "name": "Save Binary Storage Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1616,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "164b20e0-7f28-4bff-81a9-3e93b1cc04ff",
+              "leftValue": "={{ $json.file_extension }}",
+              "rightValue": "pdf",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "7373d7e2-3b54-4942-9850-a1407bf20f01",
+      "name": "IF Document Format",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1408,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst simulatedPdfText = `\nHÓA ĐƠN GIÁ TRỊ GIA TĂNG (VAT INVOICE)\nKý hiệu: 1C26TNV - Số: INV-${Math.floor(100000 + Math.random() * 900000)}\nNgày lập: 2026-10-02\nĐơn vị bán: Công ty Cổ phần Giải pháp Số NovaCRM\nMã số thuế bán: 0402123456\nĐơn vị mua: ${item.sender_name}\nMã số thuế mua: 0312987654\nCộng tiền hàng: 85,000,000 VND\nThuế suất GTGT: 10%\nTiền thuế GTGT: 8,500,000 VND\nTổng cộng tiền thanh toán: 93,500,000 VND\n`;\n\nreturn [{\n  json: {\n    ...item,\n    extraction_method: 'PDF_TEXT_LAYER_PARSER',\n    raw_extracted_text: simulatedPdfText\n  }\n}];"
+      },
+      "id": "356689c0-e47c-4754-87b4-5cb79c766782",
+      "name": "Read PDF Buffer Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1152,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst simulatedOcrText = `\n[GOOGLE VISION OCR SCAN]\nHOA DON DIEN TU VAT\nSo HD: INV-${Math.floor(100000 + Math.random() * 900000)}\nNgay: 2026-10-02\nBen ban: Cong ty Co phan Giai phap So NovaCRM\nMST: 0402123456\nBen mua: ${item.sender_name}\nSubtotal: 50,000,000 VND\nVAT 10%: 5,000,000 VND\nTotal Amount: 55,000,000 VND\n`;\n\nreturn [{\n  json: {\n    ...item,\n    extraction_method: 'VISION_OCR_ENGINE',\n    raw_extracted_text: simulatedOcrText\n  }\n}];"
+      },
+      "id": "e3199621-da7d-4336-8ccc-79722eddd1ff",
+      "name": "Vision OCR Engine Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1152,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nreturn [{\n  json: {\n    ...item,\n    text_normalized: item.raw_extracted_text.trim(),\n    extracted_char_count: item.raw_extracted_text.length\n  }\n}];"
+      },
+      "id": "3aa1e6c9-45e2-413d-bb0b-77dce7b03fcd",
+      "name": "Merge Raw Text Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -912,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst text = item.text_normalized || '';\n\n// Trích xuất số hóa đơn\nconst invMatch = text.match(/(?:Số|So HD|INV)[:\\s-]*([A-Z0-9-]+)/i);\nconst invoiceNumber = invMatch ? invMatch[1] : ('INV-' + Math.floor(100000 + Math.random() * 900000));\n\n// Trích xuất ngày lập\nconst dateMatch = text.match(/(\\d{4}-\\\\d{2}-\\\\d{2})/);\nconst issueDate = dateMatch ? dateMatch[1] : '2026-10-02';\n\n// Trích xuất MST bên bán\nconst mstMatch = text.match(/(?:Mã số thuế bán|MST)[:\\s]*([0-9]{10,13})/i);\nconst taxCode = mstMatch ? mstMatch[1] : '0402123456';\n\nconst sellerName = 'Công ty Cổ phần Giải pháp Số NovaCRM';\n\n// Ưu tiên lấy số tiền truyền từ request/curl vào\nconst isPdf = item.file_extension === 'pdf';\nconst subtotal = item.subtotal || (isPdf ? 85000000 : 50000000);\nconst vatAmount = item.vat_amount || (isPdf ? 8500000 : 5000000);\n\n// Nếu cURL có truyền total_amount cố ý làm lệch thì lấy chính giá trị đó\nconst totalAmount = item.total_amount !== undefined \n  ? item.total_amount \n  : (item.raw_total_amount || (isPdf ? 93500000 : 55000000));\n\nreturn [{\n  json: {\n    ...item,\n    invoice_number: invoiceNumber,\n    issue_date: issueDate,\n    tax_code: taxCode,\n    seller_name: sellerName,\n    buyer_name: item.sender_name,\n    raw_subtotal: subtotal,\n    raw_vat_amount: vatAmount,\n    raw_total_amount: totalAmount\n  }\n}];"
+      },
+      "id": "76af30e4-6448-4d6f-90b8-8114516d49d6",
+      "name": "AI Field Extractor Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -704,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\nreturn [{\n  json: {\n    ...item,\n    invoice_number: String(item.invoice_number).trim(),\n    issue_date: new Date(item.issue_date).toISOString().split('T')[0],\n    tax_code: String(item.tax_code).trim(),\n    seller_name: String(item.seller_name).trim(),\n    buyer_name: String(item.buyer_name).trim(),\n    subtotal: parseFloat(Number(item.raw_subtotal).toFixed(2)),\n    vat_amount: parseFloat(Number(item.raw_vat_amount).toFixed(2)),\n    total_amount: parseFloat(Number(item.raw_total_amount).toFixed(2))\n  }\n}];"
+      },
+      "id": "c0d22900-713b-4049-9bee-f5bf8745e400",
+      "name": "Parse Financial Schema Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\n// Lấy an toàn dữ liệu từ Webhook ban đầu\nvar webhookData = {};\ntry {\n  var webhookNode = $('Attachment Webhook Trigger').first();\n  if (webhookNode && webhookNode.json) {\n    webhookData = webhookNode.json.body || webhookNode.json;\n  }\n} catch (e) {\n  webhookData = {};\n}\n\n// Lấy giá trị số tiền (nếu webhook gửi lên thì ưu tiên lấy, không thì lấy từ bước trước)\nvar totalAmount = 93500000;\nif (webhookData && typeof webhookData.total_amount !== 'undefined') {\n  totalAmount = Number(webhookData.total_amount);\n} else if (typeof item.total_amount !== 'undefined') {\n  totalAmount = Number(item.total_amount);\n}\n\nvar subtotal = Number(item.subtotal || 85000000);\nvar vatAmount = Number(item.vat_amount || 8500000);\n\nvar calculatedTotal = subtotal + vatAmount;\nvar discrepancy = Math.abs(calculatedTotal - totalAmount);\n\n// Kiểm tra đối soát: nếu chênh lệch <= 1 thì hợp lệ (1), ngược lại là sai lệch (0)\nvar isMathValid = discrepancy <= 1 ? 1 : 0;\nvar auditNotes = isMathValid === 1\n  ? 'Khop chinh xac 100% so lieu ke toan'\n  : 'Sai lech so hoc: Tien hang + VAT lech ' + discrepancy + ' VND so voi Tong thanh toan';\n\nreturn [{\n  json: {\n    file_name: item.file_name || 'hoadon.pdf',\n    file_extension: item.file_extension || 'pdf',\n    sender_name: item.sender_name || webhookData.sender_name || 'Khach hang',\n    sender_email: item.sender_email || webhookData.sender_email || 'test@gmail.com',\n    invoice_number: item.invoice_number || 'INV-2026',\n    issue_date: item.issue_date || '2026-10-02',\n    tax_code: item.tax_code || '0402123456',\n    seller_name: item.seller_name || 'Cong ty Co phan Giai phap So NovaCRM',\n    buyer_name: item.buyer_name || item.sender_name || 'Khach hang',\n    storage_path: item.storage_path || '/var/storage/invoices/default.pdf',\n    subtotal: subtotal,\n    vat_amount: vatAmount,\n    total_amount: totalAmount,\n    calculated_total: calculatedTotal,\n    discrepancy: discrepancy,\n    is_math_valid: isMathValid,\n    audit_notes: auditNotes\n  }\n}];"
+      },
+      "id": "50bdd116-e05e-434d-8a0a-1e61b3c4d468",
+      "name": "Math Integrity Audit Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "fc05845c-3830-454e-b79a-1f355302546b",
+              "leftValue": "=={{ $json.is_math_valid }}",
+              "rightValue": "1",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "e56373cd-5fc7-49d3-803f-b48aa0639ace",
+      "name": "IF Data Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -32,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS finance_invoices (\n  id SERIAL PRIMARY KEY,\n  invoice_number VARCHAR(100) UNIQUE NOT NULL,\n  issue_date DATE,\n  tax_code VARCHAR(50),\n  seller_name VARCHAR(255),\n  buyer_name VARCHAR(255),\n  buyer_email VARCHAR(255),\n  subtotal NUMERIC(15, 2),\n  vat_amount NUMERIC(15, 2),\n  total_amount NUMERIC(15, 2),\n  storage_path TEXT,\n  status VARCHAR(50) DEFAULT 'VALID',\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\nINSERT INTO finance_invoices (invoice_number, issue_date, tax_code, seller_name, buyer_name, buyer_email, subtotal, vat_amount, total_amount, storage_path, status)\nVALUES (\n  '{{ $json.invoice_number }}',\n  '{{$json.issue_date }}',\n  '{{ $json.tax_code }}',\n  '{{$json.seller_name }}',\n  '{{ $json.buyer_name }}',\n  '{{$json.sender_email }}',\n  {{ $json.subtotal }},\n  {{$json.vat_amount }},\n  {{ $json.total_amount }},\n  '{{$json.storage_path }}',\n  'VALID'\n)\nON CONFLICT (invoice_number) DO UPDATE \nSET total_amount = EXCLUDED.total_amount,\n    status = 'VALID'\nRETURNING *;",
+        "options": {}
+      },
+      "id": "bb663261-9c40-455e-980d-0d328970f7ce",
+      "name": "Insert Valid Invoice Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        224,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "dOIn9Rk5SNKWkQqD",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://172.17.0.1:4000/api/v1/crm/invoices",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"invoiceNumber\": \"{{ $('Math Integrity Audit Code').first().json.invoice_number }}\",\n  \"buyerEmail\": \"{{ $('Math Integrity Audit Code').first().json.sender_email }}\",\n  \"buyerName\": \"{{ $('Math Integrity Audit Code').first().json.buyer_name }}\",\n  \"subtotal\": {{ $('Math Integrity Audit Code').first().json.subtotal }},\n  \"vatAmount\": {{ $('Math Integrity Audit Code').first().json.vat_amount }},\n  \"totalAmount\": {{ $('Math Integrity Audit Code').first().json.total_amount }},\n  \"taxCode\": \"{{ $('Math Integrity Audit Code').first().json.tax_code }}\",\n  \"status\": \"VERIFIED_FINANCE\"\n}",
+        "options": {}
+      },
+      "id": "b4793862-bfab-45b3-8206-09b194f3588a",
+      "name": "Sync Accounting API HTTP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "fromEmail": "huonglan8926@gmail.com",
+        "toEmail": "={{ $('Math Integrity Audit Code').first().json.sender_email }}",
+        "subject": "=NovaCRM: Xác nhận tiếp nhận & Kiểm tra hợp lệ hóa đơn #{{ $('Math Integrity Audit Code').first().json.invoice_number }}",
+        "html": "=<!DOCTYPE html>\n<html lang=\"vi\">\n<head>\n  <meta charset=\"UTF-8\">\n  <style>\n    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b; }\n    .box { max-width: 600px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }\n    .header { background: #0f172a; padding: 28px; color: #ffffff; }\n    .header h2 { margin: 0; font-size: 20px; font-weight: 700; }\n    .badge { display: inline-block; background: #10b981; color: white; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; margin-top: 8px; }\n    .body { padding: 28px; line-height: 1.6; font-size: 14px; }\n    .table { width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 13px; }\n    .table td { padding: 10px 12px; border: 1px solid #e2e8f0; }\n    .table td:first-child { background: #f8fafc; font-weight: 600; width: 40%; color: #475569; }\n    .footer { background: #f1f5f9; padding: 18px; text-align: center; font-size: 12px; color: #64748b; }\n  </style>\n</head>\n<body>\n  <div class=\"box\">\n    <div class=\"header\">\n      <h2>XÁC NHẬN CHỨNG TỪ HỢP LỆ</h2>\n      <span class=\"badge\">TIẾP NHẬN THÀNH CÔNG</span>\n    </div>\n    <div class=\"body\">\n      <p>Kính gửi Quý đơn vị <strong>{{ $('Math Integrity Audit Code').first().json.buyer_name }}</strong>,</p>\n      <p>Hệ thống tự động hóa NovaCRM đã tiếp nhận và đối soát số học thành công tệp hóa đơn của Quý khách:</p>\n      <table class=\"table\">\n        <tr><td>Số Hóa Đơn</td><td><strong>#{{ $('Math Integrity Audit Code').first().json.invoice_number }}</strong></td></tr>\n        <tr><td>Ngày Lập</td><td>{{ $('Math Integrity Audit Code').first().json.issue_date }}</td></tr>\n        <tr><td>Mã Số Thuế</td><td>{{ $('Math Integrity Audit Code').first().json.tax_code }}</td></tr>\n        <tr><td>Tiền Chưa Thuế</td><td>{{ $('Math Integrity Audit Code').first().json.subtotal.toLocaleString('vi-VN') }} VNĐ</td></tr>\n        <tr><td>Tiền Thuế VAT</td><td>{{ $('Math Integrity Audit Code').first().json.vat_amount.toLocaleString('vi-VN') }} VNĐ</td></tr>\n        <tr><td>Tổng Thanh Toán</td><td><strong style=\"color: #0284c7;\">{{ $('Math Integrity Audit Code').first().json.total_amount.toLocaleString('vi-VN') }} VNĐ</strong></td></tr>\n      </table>\n      <p>Chứng từ đã được lưu vào hệ thống kế toán nội bộ và chuyển sang trạng thái sẵn sàng quyết toán.</p>\n      <p>Trân trọng cảm ơn sự phối hợp của Quý đơn vị,<br><strong>Phòng Kế Toán & Vận Hành NovaCRM</strong></p>\n    </div>\n    <div class=\"footer\">\n      Hệ thống xử lý hóa đơn tự động NovaCRM Enterprise • Tòa nhà Công nghệ VKU\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "896a7e25-48f8-4e81-ba70-c69c135b3e72",
+      "name": "Confirm Receipt Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        672,
+        0
+      ],
+      "webhookId": "85354550-d98b-446c-8b10-162ababe4b55",
+      "credentials": {
+        "smtp": {
+          "id": "ahqq2Ksc3TpsOb56",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS finance_audit_logs (\n  id SERIAL PRIMARY KEY,\n  invoice_number VARCHAR(100),\n  audit_status VARCHAR(50),\n  notes TEXT,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\nINSERT INTO finance_audit_logs (invoice_number, audit_status, notes)\nVALUES (\n  '{{ $('Math Integrity Audit Code').first().json.invoice_number }}',\n  'AUDIT_PASSED',\n  'Chứng từ hợp lệ. Tiền hàng + VAT khớp với Tổng thanh toán.'\n);",
+        "options": {}
+      },
+      "id": "dba90198-83e5-445d-b027-c7a62024314d",
+      "name": "Audit Success Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        896,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "dOIn9Rk5SNKWkQqD",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS finance_invoices (\n  id SERIAL PRIMARY KEY,\n  invoice_number VARCHAR(100) UNIQUE NOT NULL,\n  issue_date DATE,\n  tax_code VARCHAR(50),\n  seller_name VARCHAR(255),\n  buyer_name VARCHAR(255),\n  buyer_email VARCHAR(255),\n  subtotal NUMERIC(15, 2),\n  vat_amount NUMERIC(15, 2),\n  total_amount NUMERIC(15, 2),\n  storage_path TEXT,\n  status VARCHAR(50) DEFAULT 'FLAGGED_SUSPICIOUS',\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\nINSERT INTO finance_invoices (invoice_number, issue_date, tax_code, seller_name, buyer_name, buyer_email, subtotal, vat_amount, total_amount, storage_path, status)\nVALUES (\n  '{{ $json.invoice_number }}',\n  '{{$json.issue_date }}',\n  '{{ $json.tax_code }}',\n  '{{$json.seller_name }}',\n  '{{ $json.buyer_name }}',\n  '{{$json.sender_email }}',\n  {{ $json.subtotal }},\n  {{$json.vat_amount }},\n  {{ $json.total_amount }},\n  '{{$json.storage_path }}',\n  'FLAGGED_SUSPICIOUS'\n)\nON CONFLICT (invoice_number) DO UPDATE \nSET status = 'FLAGGED_SUSPICIOUS';\n",
+        "options": {}
+      },
+      "id": "9dd16413-dda7-436a-a237-7ff2fc476335",
+      "name": "Flag Suspicious Invoice Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        224,
+        320
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "dOIn9Rk5SNKWkQqD",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "huonglan8926@gmail.com",
+        "toEmail": "huonglan8926@gmail.com",
+        "subject": "=🚨 [CẢNH BÁO KẾ TOÁN] Sai lệch số liệu hóa đơn #{{ $('Math Integrity Audit Code').first().json.invoice_number }}",
+        "html": "=<!DOCTYPE html>\n<html lang=\"vi\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Cảnh Báo Kế Toán</title>\n</head>\n<body style=\"margin: 0; padding: 24px; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; -webkit-font-smoothing: antialiased;\">\n  <table role=\"presentation\" width=\"100%\" border=\"0\" cellspacing=\"0\" cellpadding=\"0\">\n    <tr>\n      <td align=\"center\">\n        <div style=\"max-width: 600px; width: 100%; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #fecaca; box-shadow: 0 4px 14px rgba(239, 68, 68, 0.08);\">\n          \n          <!-- Header Banner -->\n          <div style=\"background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); padding: 28px 24px; color: #ffffff; text-align: left;\">\n            <span style=\"display: inline-block; background: rgba(255, 255, 255, 0.2); padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;\">\n              Hệ thống Kiểm toán AI NovaCRM\n            </span>\n            <h2 style=\"margin: 0; font-size: 20px; font-weight: 700; line-height: 1.3;\">\n              CẢNH BÁO: CHỨNG TỪ SAI LỆCH SỐ LIỆU\n            </h2>\n            <p style=\"margin: 6px 0 0 0; font-size: 13px; color: #fee2e2;\">\n              Phát hiện bất thường trong đối soát số học hóa đơn đính kèm\n            </p>\n          </div>\n\n          <!-- Body Content -->\n          <div style=\"padding: 28px 24px;\">\n            <p style=\"margin: 0 0 16px 0; font-size: 14px; line-height: 1.6; color: #334155;\">\n              Kính gửi <strong>Bộ phận Kế toán - Kiểm toán</strong>,\n            </p>\n            <p style=\"margin: 0 0 20px 0; font-size: 14px; line-height: 1.6; color: #334155;\">\n              Hệ thống AI vừa quét và phát hiện hóa đơn sau đây có <strong>tổng thanh toán không khớp</strong> với phép tính <code>(Tiền hàng + Thuế VAT)</code>:\n            </p>\n\n            <!-- Metadata Box -->\n            <div style=\"background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 18px; margin-bottom: 20px;\">\n              <table width=\"100%\" style=\"font-size: 13px; line-height: 1.8; color: #475569;\">\n                <tr>\n                  <td width=\"35%\" style=\"font-weight: 600;\">Số Hóa Đơn:</td>\n                  <td><strong style=\"color: #0f172a;\">#{{ $('Math Integrity Audit Code').first().json.invoice_number }}</strong></td>\n                </tr>\n                <tr>\n                  <td style=\"font-weight: 600;\">Đơn Vị Gửi:</td>\n                  <td style=\"color: #0f172a;\">{{ $('Math Integrity Audit Code').first().json.buyer_name }}</td>\n                </tr>\n                <tr>\n                  <td style=\"font-weight: 600;\">Email Người Gửi:</td>\n                  <td><a href=\"mailto:{{ $('Math Integrity Audit Code').first().json.sender_email }}\" style=\"color: #2563eb; text-decoration: none;\">{{ $('Math Integrity Audit Code').first().json.sender_email }}</a></td>\n                </tr>\n              </table>\n            </div>\n\n            <!-- Audit Comparison Table -->\n            <table width=\"100%\" style=\"border-collapse: collapse; margin-bottom: 20px; font-size: 13px;\">\n              <thead>\n                <tr style=\"background-color: #f1f5f9; text-align: left; color: #475569;\">\n                  <th style=\"padding: 10px 12px; border: 1px solid #e2e8f0; border-top-left-radius: 6px;\">Khoản mục đối soát</th>\n                  <th style=\"padding: 10px 12px; border: 1px solid #e2e8f0; text-align: right; border-top-right-radius: 6px;\">Số tiền ghi nhận</th>\n                </tr>\n              </thead>\n              <tbody>\n                <tr>\n                  <td style=\"padding: 10px 12px; border: 1px solid #e2e8f0; color: #475569;\">Tiền hàng (Subtotal)</td>\n                  <td style=\"padding: 10px 12px; border: 1px solid #e2e8f0; text-align: right; font-weight: 600; color: #0f172a;\">\n                    {{ $('Math Integrity Audit Code').first().json.subtotal.toLocaleString('vi-VN') }} VNĐ\n                  </td>\n                </tr>\n                <tr>\n                  <td style=\"padding: 10px 12px; border: 1px solid #e2e8f0; color: #475569;\">Thuế VAT</td>\n                  <td style=\"padding: 10px 12px; border: 1px solid #e2e8f0; text-align: right; font-weight: 600; color: #0f172a;\">\n                    {{ $('Math Integrity Audit Code').first().json.vat_amount.toLocaleString('vi-VN') }} VNĐ\n                  </td>\n                </tr>\n                <tr style=\"background-color: #fef2f2;\">\n                  <td style=\"padding: 10px 12px; border: 1px solid #fecaca; color: #991b1b; font-weight: 600;\">Tổng thanh toán trên HĐ</td>\n                  <td style=\"padding: 10px 12px; border: 1px solid #fecaca; text-align: right; font-weight: 700; color: #b91c1c;\">\n                    {{ $('Math Integrity Audit Code').first().json.total_amount.toLocaleString('vi-VN') }} VNĐ\n                  </td>\n                </tr>\n                <tr>\n                  <td style=\"padding: 10px 12px; border: 1px solid #e2e8f0; color: #475569;\">Tổng hệ thống tính lại</td>\n                  <td style=\"padding: 10px 12px; border: 1px solid #e2e8f0; text-align: right; font-weight: 600; color: #0284c7;\">\n                    {{ $('Math Integrity Audit Code').first().json.calculated_total.toLocaleString('vi-VN') }} VNĐ\n                  </td>\n                </tr>\n                <tr style=\"background-color: #fff1f2;\">\n                  <td style=\"padding: 12px; border: 1px solid #fecdd3; font-weight: 700; color: #be123c;\">\n                    MỨC ĐỘ CHÊNH LỆCH\n                  </td>\n                  <td style=\"padding: 12px; border: 1px solid #fecdd3; text-align: right; font-size: 15px; font-weight: 800; color: #e11d48;\">\n                    ▲ {{ $('Math Integrity Audit Code').first().json.discrepancy.toLocaleString('vi-VN') }} VNĐ\n                  </td>\n                </tr>\n              </tbody>\n            </table>\n\n            <!-- Storage Path Box -->\n            <div style=\"background-color: #f8fafc; border-left: 4px solid #ef4444; padding: 12px 16px; border-radius: 4px; margin-bottom: 24px;\">\n              <div style=\"font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 4px;\">ĐƯỜNG DẪN TỆP LƯU TRỮ GỐC:</div>\n              <code style=\"font-family: monospace; font-size: 12px; color: #0f172a; word-break: break-all;\">\n                {{ $('Math Integrity Audit Code').first().json.storage_path }}\n              </code>\n            </div>\n\n            <p style=\"margin: 0; font-size: 13px; line-height: 1.6; color: #64748b;\">\n              <em>* Lưu ý: Chứng từ này đã được đánh dấu cờ <strong>SUSPICIOUS</strong> trên hệ thống và tạm hoãn quá trình thanh toán cho đến khi kế toán duyệt thủ công.</em>\n            </p>\n          </div>\n\n          <!-- Footer -->\n          <div style=\"background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 18px 24px; text-align: center; font-size: 12px; color: #94a3b8;\">\n            Hệ thống xử lý & đối soát chứng từ tự động NovaCRM • Hotline IT: 1900 8888\n          </div>\n\n        </div>\n      </td>\n    </tr>\n  </table>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "2c5a1e79-1771-4ad3-8455-bcc9a85f437d",
+      "name": "Alert Accountant Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        448,
+        320
+      ],
+      "webhookId": "5ff6f25b-f499-4f3d-a57d-ef2e0e53f5c5",
+      "credentials": {
+        "smtp": {
+          "id": "ahqq2Ksc3TpsOb56",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://172.17.0.1:4000/api/v1/crm/notifications",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"ERROR\",\n  \"title\": \"Sai lệch chứng từ hóa đơn\",\n  \"message\": \"Hóa đơn #{{ $('Math Integrity Audit Code').first().json.invoice_number }} sai lệch số tiền {{ $('Math Integrity Audit Code').first().json.discrepancy }} VNĐ\",\n  \"invoiceNumber\": \"{{ $('Math Integrity Audit Code').first().json.invoice_number }}\"\n}",
+        "options": {}
+      },
+      "id": "62847c15-9c3a-41e7-9e8d-c95f0b15ec07",
+      "name": "Push UI Toast Alert HTTP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        320
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS finance_audit_logs (\n  id SERIAL PRIMARY KEY,\n  invoice_number VARCHAR(100),\n  audit_status VARCHAR(50),\n  notes TEXT,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\nINSERT INTO finance_audit_logs (invoice_number, audit_status, notes)\nVALUES (\n  '{{ $('Math Integrity Audit Code').first().json.invoice_number }}',\n  'AUDIT_FLAGGED_MATH_MISMATCH',\n  'Cảnh báo: Tiền hàng + VAT chênh lệch {{ $('Math Integrity Audit Code').first().json.discrepancy }} VNĐ so với Tổng thanh toán.'\n);",
+        "options": {}
+      },
+      "id": "5fadd826-9d4b-4dea-97ff-fd1472ebf205",
+      "name": "Audit Integrity Flag Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        896,
+        320
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "dOIn9Rk5SNKWkQqD",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "533173db-7e5c-4042-b1a1-209958781127",
+      "name": "Pipeline Error Catch",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2496,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "huonglan8926@gmail.com",
+        "toEmail": "={{ $('Attachment Webhook Trigger').first().json.body?.sender_email || $('Attachment Webhook Trigger').first().json.sender_email }}",
+        "subject": "[NovaCRM] Từ chối tiếp nhận: Tệp đính kèm không đúng định dạng hóa đơn",
+        "html": "=<!DOCTYPE html>\n<html>\n<body style=\"font-family: Arial, sans-serif; line-height: 1.6; color: #333333; padding: 20px;\">\n  <div style=\"max-width: 560px; border: 1px solid #fed7aa; border-radius: 8px; overflow: hidden;\">\n    <div style=\"background-color: #ea580c; color: #ffffff; padding: 16px 20px;\">\n      <h3 style=\"margin: 0; font-size: 17px;\">THÔNG BÁO TỪ CHỐI TIẾP NHẬN CHỨNG TỪ</h3>\n    </div>\n    <div style=\"padding: 20px;\">\n      <p>Kính gửi Quý đơn vị / Khách hàng,</p>\n      <p>Hệ thống tự động hóa NovaCRM vừa tiếp nhận yêu cầu gửi chứng từ của Quý khách, tuy nhiên tệp đính kèm không đúng định dạng được hỗ trợ:</p>\n      <ul>\n        <li><strong>Tên tệp gửi lên:</strong> {{ $('Attachment Webhook Trigger').first().json.body?.filename || $('Attachment Webhook Trigger').first().json.filename }}</li>\n        <li><strong>Định dạng chấp nhận:</strong> <code>.pdf</code>, <code>.png</code>, <code>.jpg</code>, <code>.jpeg</code></li>\n      </ul>\n      <p>Vui lòng chuyển đổi tệp sang định dạng hợp lệ và gửi lại để hệ thống tiến hành bóc tách và đối soát tự động.</p>\n      <p style=\"margin-bottom: 0;\">Trân trọng,<br><strong>Phòng Kế toán & Vận hành NovaCRM</strong></p>\n    </div>\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        -2032,
+        304
+      ],
+      "id": "e47b1029-bb8d-489a-b7f9-6e5c1f3d1679",
+      "name": "Send an Email",
+      "webhookId": "a7bbaca8-4cfa-4c6c-a8f0-abb622ba9732",
+      "credentials": {
+        "smtp": {
+          "id": "ahqq2Ksc3TpsOb56",
+          "name": "SMTP account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Attachment Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Filter Extensions IF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Extensions IF": {
+      "main": [
+        [
+          {
+            "node": "Extract Metadata Code",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send an Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Metadata Code": {
+      "main": [
+        [
+          {
+            "node": "Save Binary Storage Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Binary Storage Code": {
+      "main": [
+        [
+          {
+            "node": "IF Document Format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Document Format": {
+      "main": [
+        [
+          {
+            "node": "Read PDF Buffer Code",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Vision OCR Engine Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read PDF Buffer Code": {
+      "main": [
+        [
+          {
+            "node": "Merge Raw Text Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vision OCR Engine Code": {
+      "main": [
+        []
+      ]
+    },
+    "Merge Raw Text Code": {
+      "main": [
+        [
+          {
+            "node": "AI Field Extractor Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Field Extractor Code": {
+      "main": [
+        [
+          {
+            "node": "Parse Financial Schema Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Financial Schema Code": {
+      "main": [
+        [
+          {
+            "node": "Math Integrity Audit Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Math Integrity Audit Code": {
+      "main": [
+        [
+          {
+            "node": "IF Data Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Data Valid": {
+      "main": [
+        [
+          {
+            "node": "Insert Valid Invoice Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Flag Suspicious Invoice Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Valid Invoice Postgres": {
+      "main": [
+        [
+          {
+            "node": "Sync Accounting API HTTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Accounting API HTTP": {
+      "main": [
+        [
+          {
+            "node": "Confirm Receipt Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm Receipt Email": {
+      "main": [
+        [
+          {
+            "node": "Audit Success Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag Suspicious Invoice Postgres": {
+      "main": [
+        [
+          {
+            "node": "Alert Accountant Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Accountant Email": {
+      "main": [
+        [
+          {
+            "node": "Push UI Toast Alert HTTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push UI Toast Alert HTTP": {
+      "main": [
+        [
+          {
+            "node": "Audit Integrity Flag Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send an Email": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "1b773877-56fe-451e-ac01-c7821932bb04",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "bcdc4132d5eca99d09bd1b78d9cb808d5719984b465ac0c3605800def13cd04c"
+  },
+  "nodeGroups": [],
+  "id": "1N2izRMw1GAxXeFf",
+  "tags": []
+}
