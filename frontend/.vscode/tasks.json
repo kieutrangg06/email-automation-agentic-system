@@ -1,0 +1,39 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "1. Start Docker Containers",
+      "type": "shell",
+      "command": "cd docker && docker compose up -d",
+      "problemMatcher": []
+    },
+    {
+      "label": "2. Start NestJS Backend",
+      "type": "shell",
+      "command": "cd backend && npm run start:dev",
+      "isBackground": true,
+      "problemMatcher": "$tsc-watch"
+    },
+    {
+      "label": "3. Start Next.js Frontend",
+      "type": "shell",
+      "command": "cd frontend && npm run dev",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Start All Services",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "1. Start Docker Containers",
+        "2. Start NestJS Backend",
+        "3. Start Next.js Frontend"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}
