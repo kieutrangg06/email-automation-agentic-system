@@ -1,0 +1,800 @@
+{
+  "name": "Daily Inbox Intelligence & Automated Digest",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 18,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "l4-01",
+      "name": "L4-01 Daily Cron Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*)::int AS total_received FROM email_triage_logs WHERE ((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date;",
+        "options": {}
+      },
+      "id": "l4-02",
+      "name": "L4-02 Count Total Inbound",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "postgres": {
+          "id": "CaIms8Oqvb0ztig0",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id,ticket_code,sender_email,title,category,priority,status,created_at FROM tickets WHERE status IN ('OPEN','PENDING','IN_PROGRESS') ORDER BY CASE WHEN priority ILIKE '%P1%' THEN 0 ELSE 1 END,created_at ASC LIMIT 500;",
+        "options": {}
+      },
+      "id": "l4-03",
+      "name": "L4-03 Query Pending Tickets",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        300
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "postgres": {
+          "id": "CaIms8Oqvb0ztig0",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH events AS (SELECT id,sender_email,subject,body_snippet,category,priority,sentiment,urgency_reason,status,created_at,((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS event_date FROM email_triage_logs WHERE ((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Ho_Chi_Minh')::date >= (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 7 AND ((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date), daily AS (SELECT event_date,COUNT(*) FILTER (WHERE sentiment ILIKE '%tieu cuc%' OR sentiment ILIKE '%negative%' OR priority ILIKE '%P1%' OR urgency_reason ILIKE '%complaint%' OR urgency_reason ILIKE '%khieu nai%' OR urgency_reason ILIKE '%urgent%')::int AS incident_count FROM events GROUP BY event_date), issues AS (SELECT * FROM events WHERE sentiment ILIKE '%tieu cuc%' OR sentiment ILIKE '%negative%' OR priority ILIKE '%P1%' OR urgency_reason ILIKE '%complaint%' OR urgency_reason ILIKE '%khieu nai%' OR urgency_reason ILIKE '%urgent%') SELECT i.id,i.sender_email,i.subject,i.body_snippet,i.category,i.priority,i.sentiment,i.urgency_reason,i.status,d.event_date,d.incident_count FROM daily d LEFT JOIN issues i ON i.event_date=d.event_date ORDER BY d.event_date DESC,i.created_at DESC LIMIT 1000;",
+        "options": {}
+      },
+      "id": "l4-04",
+      "name": "L4-04 Query Negative Issues",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        660,
+        300
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "postgres": {
+          "id": "CaIms8Oqvb0ztig0",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const date=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Ho_Chi_Minh'}).format(new Date()),count=Number($('L4-02 Count Total Inbound').first().json.total_received||0),tickets=$('L4-03 Query Pending Tickets').all().map(x=>x.json).filter(x=>x.id!==undefined),rows=$input.all().map(x=>x.json).filter(x=>x.event_date!==undefined),signals=rows.filter(x=>x.id!==undefined),dailyCounts={};for(const row of rows){const day=String(row.event_date).slice(0,10);dailyCounts[day]=Number(row.incident_count||0);}const current=signals.filter(x=>String(x.event_date).slice(0,10)===date),historicalDays=Object.keys(dailyCounts).filter(day=>day<date),categories={},priorities={};for(const row of current){const cat=row.category||'Uncategorized',pri=row.priority||'Unspecified';categories[cat]=(categories[cat]||0)+1;priorities[pri]=(priorities[pri]||0)+1;}const p1=current.filter(x=>String(x.priority||'').toUpperCase().includes('P1')).length;const reportFacts={date,total_received:count,total_pending_tickets:tickets.length,total_p1:p1,negative_issues:current,categories,priorities};const ai_prompt='Analyze only these operational inbox facts; do not invent trends. If evidence is insufficient, say exactly: Không đủ dữ liệu để kết luận. Return JSON {key_insights:[],risk_summary:string,recommendations:[]} with short operational recommendations only.\\\\nDATA: '+JSON.stringify(reportFacts);const gemini_request_body={contents:[{parts:[{text:ai_prompt}]}],generationConfig:{responseMimeType:'application/json',temperature:0.1}};return[{json:{date,total_received:count,total_pending_tickets:tickets.length,pending_tickets:tickets,total_p1:p1,negative_issues:current,categories,priorities,incident_current:Number(dailyCounts[date]||0),incident_baseline_sum:historicalDays.reduce((sum,day)=>sum+dailyCounts[day],0),baseline_days:historicalDays.length,baseline_daily_counts:dailyCounts,gemini_request_body}}];"
+      },
+      "id": "l4-05",
+      "name": "L4-05 Aggregate Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=' + encodeURIComponent($env.GEMINI_API_KEY || '') }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.gemini_request_body }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "l4-06",
+      "name": "L4-06 AI Insights Generator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500
+    },
+    {
+      "parameters": {
+        "jsCode": "const stats=$('L4-05 Aggregate Stats').first().json,raw=$input.first().json;let ai={key_insights:[],risk_summary:'Không đủ dữ liệu để kết luận.',recommendations:[]};try{const text=raw.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('').trim()||raw.text||'',fence=String.fromCharCode(96).repeat(3),clean=text.startsWith(fence)?text.slice(text.indexOf(String.fromCharCode(10))+1).split(fence)[0].trim():text,a=clean.indexOf('{'),b=clean.lastIndexOf('}'),parsed=JSON.parse(clean.slice(a,b+1));ai={key_insights:Array.isArray(parsed.key_insights)?parsed.key_insights:[],risk_summary:String(parsed.risk_summary||ai.risk_summary),recommendations:Array.isArray(parsed.recommendations)?parsed.recommendations:[]};}catch(e){}const p1Issues=stats.negative_issues.filter(x=>String(x.priority||'').toUpperCase().includes('P1')).map(x=>'- '+x.subject+' ('+x.sender_email+')');const lines=['# Daily Inbox Intelligence','','Report date: '+stats.date,'','## Tổng quan','- Email tiếp nhận: '+stats.total_received,'- Ticket đang chờ: '+stats.total_pending_tickets,'- P1/Critical: '+stats.total_p1,'','## Ticket tồn đọng',...(stats.pending_tickets.length?stats.pending_tickets.slice(0,20).map(t=>'- '+t.ticket_code+': '+t.title+' ('+t.priority+', '+t.status+')'):['- Không có ticket tồn đọng.']),'','## Vấn đề tiêu cực',...(stats.negative_issues.length?stats.negative_issues.slice(0,20).map(x=>'- '+x.subject+' | '+x.category+' | '+x.priority+' | '+x.sentiment):['- Không có vấn đề tiêu cực/khẩn cấp được ghi nhận.']),'','## P1/Critical',...(p1Issues.length?p1Issues:['- Không có P1/Critical.']).slice(0,20),'','## AI Insights',...(ai.key_insights.length?ai.key_insights.map(x=>'- '+(typeof x==='string'?x:JSON.stringify(x))):['- Không đủ dữ liệu để kết luận.']),'','## Risk',ai.risk_summary,'','## Recommendations',...(ai.recommendations.length?ai.recommendations.map(x=>'- '+x):['- Không đủ dữ liệu để kết luận.'])];return[{json:{...stats,...ai,markdown_digest:lines.join('\\n')}}];"
+      },
+      "id": "l4-07",
+      "name": "L4-07 Markdown Digest Builder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$input.first().json,esc=v=>String(v??'').replace(/[&<>\\\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\\\"':'&quot;',\"'\":'&#39;'}[c]));const insights=d.key_insights.map(x=>`<li>${esc(typeof x==='string'?x:JSON.stringify(x))}</li>`).join('')||'<li>Không đủ dữ liệu để kết luận.</li>';const html=`<div style=\"font-family:Arial,sans-serif;color:#172420;max-width:720px;margin:auto\"><header style=\"background:#126b56;color:white;padding:22px 26px\"><p style=\"margin:0;font-size:11px;letter-spacing:2px\">OPERATIONS BRIEF</p><h1 style=\"margin:8px 0 0;font-size:24px\">Daily Inbox Intelligence</h1><p style=\"margin:6px 0 0\">${esc(d.date)} · Asia/Ho_Chi_Minh</p></header><div style=\"display:flex;gap:8px;padding:16px;background:#f3f5f0\"><div style=\"flex:1;background:white;padding:14px\"><small>INCOMING EMAILS</small><h2>${Number(d.total_received)}</h2></div><div style=\"flex:1;background:white;padding:14px\"><small>PENDING TICKETS</small><h2>${Number(d.total_pending_tickets)}</h2></div><div style=\"flex:1;background:white;padding:14px\"><small>P1 / CRITICAL</small><h2>${Number(d.total_p1)}</h2></div></div><main style=\"padding:8px 24px 24px\"><h2>Key insights</h2><ul>${insights}</ul><h2>Risk</h2><p>${esc(d.risk_summary)}</p><h2>Negative issues</h2><p>${Number(d.negative_issues.length)} triage records</p><p style=\"color:#687570;font-size:12px\">Generated ${esc(new Date().toISOString())}</p></main></div>`;return[{json:{...d,html_digest:html}}];"
+      },
+      "id": "l4-08",
+      "name": "L4-08 HTML Email Template",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT r.recipient_email,(SELECT recipient_email FROM daily_digest_recipients WHERE is_active=TRUE AND recipient_type='OPERATIONS' ORDER BY id LIMIT 1) AS operations_email FROM daily_digest_recipients r WHERE r.is_active=TRUE AND r.recipient_type='EXECUTIVE' ORDER BY r.id LIMIT 100;",
+        "options": {}
+      },
+      "id": "l4-09",
+      "name": "L4-09 Fetch Executive Emails",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1760,
+        300
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "postgres": {
+          "id": "CaIms8Oqvb0ztig0",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO daily_summaries (summary_date,total_received,total_pending_tickets,total_p1,negative_issues,categories,priorities,key_insights,risk_summary,recommendations,markdown_digest,html_digest,incident_count,baseline_count,incident_spike) VALUES ($1::date,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8,$9,$10::jsonb,$11,$12,$13,$14,$15) ON CONFLICT(summary_date) DO UPDATE SET total_received=EXCLUDED.total_received,total_pending_tickets=EXCLUDED.total_pending_tickets,total_p1=EXCLUDED.total_p1,negative_issues=EXCLUDED.negative_issues,categories=EXCLUDED.categories,priorities=EXCLUDED.priorities,key_insights=EXCLUDED.key_insights,risk_summary=EXCLUDED.risk_summary,recommendations=EXCLUDED.recommendations,markdown_digest=EXCLUDED.markdown_digest,html_digest=EXCLUDED.html_digest,incident_count=EXCLUDED.incident_count,baseline_count=EXCLUDED.baseline_count,incident_spike=EXCLUDED.incident_spike RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$('L4-08 HTML Email Template').first().json.date,$('L4-08 HTML Email Template').first().json.total_received,$('L4-08 HTML Email Template').first().json.total_pending_tickets,$('L4-08 HTML Email Template').first().json.total_p1,JSON.stringify($('L4-08 HTML Email Template').first().json.negative_issues),JSON.stringify($('L4-08 HTML Email Template').first().json.categories),JSON.stringify($('L4-08 HTML Email Template').first().json.priorities),JSON.stringify($('L4-08 HTML Email Template').first().json.key_insights),$('L4-08 HTML Email Template').first().json.risk_summary,JSON.stringify($('L4-08 HTML Email Template').first().json.recommendations),$('L4-08 HTML Email Template').first().json.markdown_digest,$('L4-08 HTML Email Template').first().json.html_digest,$('L4-08 HTML Email Template').first().json.incident_current,$('L4-08 HTML Email Template').first().json.incident_baseline_sum/7,false] }}"
+        }
+      },
+      "id": "l4-10",
+      "name": "L4-10 Save Daily Summary",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1980,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "postgres": {
+          "id": "CaIms8Oqvb0ztig0",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const s=$('L4-05 Aggregate Stats').first().json,baseline=s.baseline_days>0?s.incident_baseline_sum/s.baseline_days:0,hasBaseline=s.baseline_days>=3&&Number.isFinite(baseline),increase=hasBaseline&&baseline>0?(s.incident_current-baseline)/baseline*100:null;return[{json:{incident_spike:Boolean(hasBaseline&&increase>30),current_count:s.incident_current,baseline_count:hasBaseline?Math.round(baseline*100)/100:null,increase_percent:increase===null?null:Math.round(increase*100)/100,baseline_days:s.baseline_days,summary_date:s.date}}];"
+      },
+      "id": "l4-11",
+      "name": "L4-11 Detect Incident Spike",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.incident_spike }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "l4-12",
+      "name": "L4-12 IF Incident Spike",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_SENDER || $env.SMTP_USER }}",
+        "toEmail": "={{ $('L4-09 Fetch Executive Emails').first().json.operations_email }}",
+        "subject": "=INCIDENT SPIKE +{{ $('L4-11 Detect Incident Spike').first().json.increase_percent }}% - {{ $('L4-11 Detect Incident Spike').first().json.summary_date }}",
+        "html": "=<div style=\"font-family:Arial,sans-serif;color:#172420\"><h2>Incident spike detected</h2><p>Current: {{ $('L4-11 Detect Incident Spike').first().json.current_count }}</p><p>7-day daily baseline: {{ $('L4-11 Detect Incident Spike').first().json.baseline_count }}</p><p>Increase: {{ $('L4-11 Detect Incident Spike').first().json.increase_percent }}%</p><p>Report date: {{ $('L4-11 Detect Incident Spike').first().json.summary_date }}</p><p>{{ $('L4-08 HTML Email Template').first().json.risk_summary }}</p></div>",
+        "options": {}
+      },
+      "id": "l4-13",
+      "name": "L4-13 Send Alert Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2640,
+        180
+      ],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "smtp": {
+          "id": "syQs2FbeoQhUSFO8",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_audit_logs (source,event_type,payload) VALUES ('n8n-workflow-4','INCIDENT_SPIKE_FLAGGED',$1::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({date:$('L4-11 Detect Incident Spike').first().json.summary_date,current_count:$('L4-11 Detect Incident Spike').first().json.current_count,baseline_count:$('L4-11 Detect Incident Spike').first().json.baseline_count,increase_percent:$('L4-11 Detect Incident Spike').first().json.increase_percent})] }}"
+        }
+      },
+      "id": "l4-14",
+      "name": "L4-14 Audit Spike Flagged",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2860,
+        180
+      ],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "postgres": {
+          "id": "CaIms8Oqvb0ztig0",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "id": "l4-15",
+      "name": "L4-15 Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        3080,
+        300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_SENDER || $env.SMTP_USER }}",
+        "toEmail": "={{ $json.recipient_email }}",
+        "subject": "=Daily Inbox Intelligence - {{ $('L4-08 HTML Email Template').first().json.date }}",
+        "html": "={{ $('L4-08 HTML Email Template').first().json.html_digest }}",
+        "options": {}
+      },
+      "id": "l4-16",
+      "name": "L4-16 Send Executive Digest",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        3300,
+        180
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "smtp": {
+          "id": "syQs2FbeoQhUSFO8",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const recipients=$('L4-09 Fetch Executive Emails').all().map(x=>x.json.recipient_email).filter(Boolean),results=$('L4-16 Send Executive Digest').all(),sent=results.filter(x=>!x.json.error&&!x.json.errorMessage).length,failed=Math.max(0,recipients.length-sent),spike=$('L4-11 Detect Incident Spike').first().json;return[{json:{success:recipients.length>0&&failed===0,total:recipients.length,sent,failed,workflow_status:recipients.length===0?'NO_RECIPIENTS':failed?'PARTIAL':'COMPLETED',recipient_emails:recipients,summary_date:$('L4-05 Aggregate Stats').first().json.date,incident_count:spike.current_count,baseline_count:spike.baseline_count,increase_percent:spike.increase_percent}}];"
+      },
+      "id": "l4-18",
+      "name": "L4-18 Confirm Batch Done",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        400
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:4000/api/v1/dashboard/daily-summary",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({summary_date:$('L4-18 Confirm Batch Done').first().json.summary_date,total_received:$('L4-05 Aggregate Stats').first().json.total_received,total_p1:$('L4-05 Aggregate Stats').first().json.total_p1,pending_tickets:$('L4-05 Aggregate Stats').first().json.total_pending_tickets,key_insights:$('L4-08 HTML Email Template').first().json.key_insights,negative_issues:$('L4-05 Aggregate Stats').first().json.negative_issues,incident_spike:$('L4-11 Detect Incident Spike').first().json.incident_spike,incident_count:$('L4-18 Confirm Batch Done').first().json.incident_count,baseline_count:$('L4-18 Confirm Batch Done').first().json.baseline_count,increase_percent:$('L4-18 Confirm Batch Done').first().json.increase_percent,risk_summary:$('L4-08 HTML Email Template').first().json.risk_summary,recommendations:$('L4-08 HTML Email Template').first().json.recommendations,recipient_count:$('L4-18 Confirm Batch Done').first().json.total,sent_count:$('L4-18 Confirm Batch Done').first().json.sent,failed_count:$('L4-18 Confirm Batch Done').first().json.failed}) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "l4-17",
+      "name": "L4-17 Push Stats to NestJS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3740,
+        400
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_audit_logs (source,event_type,payload) VALUES ('n8n-workflow-4','DAILY_REPORT_FINALIZED',$1::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({summary_date:$('L4-18 Confirm Batch Done').first().json.summary_date,total_received:$('L4-05 Aggregate Stats').first().json.total_received,total_p1:$('L4-05 Aggregate Stats').first().json.total_p1,recipients:$('L4-18 Confirm Batch Done').first().json.recipient_emails,sent:$('L4-18 Confirm Batch Done').first().json.sent,failed:$('L4-18 Confirm Batch Done').first().json.failed,incident_spike:$('L4-11 Detect Incident Spike').first().json.incident_spike,timestamp:new Date().toISOString()})] }}"
+        }
+      },
+      "id": "l4-19",
+      "name": "L4-19 Audit Report Finalized",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3960,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "CaIms8Oqvb0ztig0",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_audit_logs (source,event_type,payload) VALUES ('n8n-workflow-4','WORKFLOW_4_ERROR',$1::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({workflow:'workflow-4-digest',node:$json.node?.name||$prevNode.name||$json.node||'unknown',error_message:typeof $json.error==='string'?$json.error:$json.error?.message||$json.message||'Unknown workflow error',execution_id:$execution.id,timestamp:new Date().toISOString()})] }}"
+        }
+      },
+      "id": "l4-20",
+      "name": "L4-20 Error Catch Handler",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2420,
+        700
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "CaIms8Oqvb0ztig0",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "L4-01 Daily Cron Trigger": {
+      "main": [
+        [
+          {
+            "node": "L4-02 Count Total Inbound",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-02 Count Total Inbound": {
+      "main": [
+        [
+          {
+            "node": "L4-03 Query Pending Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-03 Query Pending Tickets": {
+      "main": [
+        [
+          {
+            "node": "L4-04 Query Negative Issues",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-04 Query Negative Issues": {
+      "main": [
+        [
+          {
+            "node": "L4-05 Aggregate Stats",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-05 Aggregate Stats": {
+      "main": [
+        [
+          {
+            "node": "L4-06 AI Insights Generator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-06 AI Insights Generator": {
+      "main": [
+        [
+          {
+            "node": "L4-07 Markdown Digest Builder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-07 Markdown Digest Builder",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-07 Markdown Digest Builder": {
+      "main": [
+        [
+          {
+            "node": "L4-08 HTML Email Template",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-08 HTML Email Template": {
+      "main": [
+        [
+          {
+            "node": "L4-09 Fetch Executive Emails",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-09 Fetch Executive Emails": {
+      "main": [
+        [
+          {
+            "node": "L4-10 Save Daily Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-10 Save Daily Summary": {
+      "main": [
+        [
+          {
+            "node": "L4-11 Detect Incident Spike",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-11 Detect Incident Spike": {
+      "main": [
+        [
+          {
+            "node": "L4-12 IF Incident Spike",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-12 IF Incident Spike": {
+      "main": [
+        [
+          {
+            "node": "L4-13 Send Alert Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-15 Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-13 Send Alert Email": {
+      "main": [
+        [
+          {
+            "node": "L4-14 Audit Spike Flagged",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-14 Audit Spike Flagged",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-14 Audit Spike Flagged": {
+      "main": [
+        [
+          {
+            "node": "L4-15 Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-15 Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "L4-16 Send Executive Digest",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-18 Confirm Batch Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-16 Send Executive Digest": {
+      "main": [
+        [
+          {
+            "node": "L4-15 Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-18 Confirm Batch Done": {
+      "main": [
+        [
+          {
+            "node": "L4-17 Push Stats to NestJS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-17 Push Stats to NestJS": {
+      "main": [
+        [
+          {
+            "node": "L4-19 Audit Report Finalized",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L4-19 Audit Report Finalized": {
+      "main": [
+        [],
+        [
+          {
+            "node": "L4-20 Error Catch Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Ho_Chi_Minh"
+  },
+  "versionId": "28496b51-c3e9-4d73-a21e-c07d9e2ada1a",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [],
+  "id": "b7d4cff65a6f083b"
+}

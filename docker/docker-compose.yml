@@ -6,13 +6,14 @@ services:
     container_name: enterprise_db
     restart: always
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: SecretPassword123!
-      POSTGRES_DB: email_automation_db
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${PGDATABASE:-email_automation_db}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ../database/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
 
   n8n:
     image: docker.n8n.io/n8nio/n8n:latest
@@ -28,10 +29,17 @@ services:
       - GENERIC_TIMEZONE=Asia/Ho_Chi_Minh
       - DB_TYPE=postgresdb
       - DB_POSTGRESDB_HOST=127.0.0.1
-      - DB_POSTGRESDB_PORT=5432
-      - DB_POSTGRESDB_DATABASE=email_automation_db
-      - DB_POSTGRESDB_USER=admin
-      - DB_POSTGRESDB_PASSWORD=SecretPassword123!
+      - DB_POSTGRESDB_PORT=${PGPORT:-5432}
+      - DB_POSTGRESDB_DATABASE=${PGDATABASE:-email_automation_db}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER:-admin}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - REPLY_HIGH_CONFIDENCE_THRESHOLD=${REPLY_HIGH_CONFIDENCE_THRESHOLD:-80}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
     volumes:
       - n8n_data:/home/node/.n8n
 

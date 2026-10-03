@@ -1,19 +1,10 @@
-import { Injectable } from "@nestjs/common";
-import { Pool } from "pg";
+import { Inject, Injectable } from '@nestjs/common';
+import { Pool } from 'pg';
+import { POSTGRES_POOL } from '../../database/database.module';
 
 @Injectable()
 export class TicketsService {
-  private pool: Pool;
-
-  constructor() {
-    this.pool = new Pool({
-      host: "127.0.0.1",
-      port: 5432,
-      user: "admin",
-      password: "SecretPassword123!",
-      database: "email_automation_db",
-    });
-  }
+  constructor(@Inject(POSTGRES_POOL) private readonly pool: Pool) {}
 
   async getDepartments() {
     const res = await this.pool.query("SELECT name, description, head_email FROM departments ORDER BY id ASC;");
